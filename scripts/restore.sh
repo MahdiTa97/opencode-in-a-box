@@ -19,18 +19,18 @@ base="$(basename "$archive")"
 
 case "$mode" in
   check)
-    sudo docker compose run --rm --no-deps --user root --entrypoint sh \
+    sudo docker compose run --rm --no-deps --entrypoint sh \
       -v "$dir:/backup:ro" opencode -c \
       "gzip -t /backup/$base && tar tzf /backup/$base | head -5 && echo 'archive is readable'"
     ;;
   restore)
-    uid="${SUDO_UID:-$(id -u)}"
-    gid="${SUDO_GID:-$(id -g)}"
     echo "stopping the container before restoring $base"
     sudo docker compose stop opencode
-    sudo docker compose run --rm --no-deps --user root --entrypoint sh \
+    # Extract as the service user so the restored files are owned by it; the
+    # container drops all capabilities, so root could not chown them anyway.
+    sudo docker compose run --rm --no-deps --entrypoint sh \
       -v "$dir:/backup:ro" opencode -c \
-      "find /home/dev/.local/share/opencode -mindepth 1 -delete 2>/dev/null || true; tar xzf /backup/$base -C /home/dev/.local/share/opencode; chown -R $uid:$gid /home/dev/.local/share/opencode"
+      "find /home/dev/.local/share/opencode -mindepth 1 -delete 2>/dev/null || true; tar xzf /backup/$base -C /home/dev/.local/share/opencode"
     echo "starting the container on the restored data"
     sudo docker compose up -d --force-recreate
     echo "restored $base; check with: sudo bash tests/acceptance.sh"

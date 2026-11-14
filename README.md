@@ -245,6 +245,12 @@ loses all of it, so back it up before upgrades and before `docker compose down -
 ./scripts/restore.sh --check backups/oc-data-<timestamp>.tar.gz
 ```
 
+Both scripts run as your own UID, inside the service user, so the volume and the
+archive belong to you. If a backup fails with `Permission denied`, the volume
+holds root-owned files from an older setup — recreate the container's data with
+`sudo docker compose run --rm --user 0 --entrypoint sh opencode -c 'chown -R $HOST_UID:$HOST_GID /home/dev/.local/share/opencode'`
+(needs the image built) and run the backup again.
+
 Restore replaces the live volume, so it stops the container first and recreates
 everything afterwards:
 

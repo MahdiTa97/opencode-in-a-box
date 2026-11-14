@@ -13,8 +13,10 @@ stamp="$(date +%Y%m%d-%H%M%S)"
 name="oc-data-$stamp.tar.gz"
 
 # Run inside the project's own image: nothing extra to pull, and the volume is
-# already mounted at the same path there.
-sudo docker compose run --rm --no-deps --user root --entrypoint sh \
+# already mounted at the same path there. The service user (your UID) owns both
+# the volume and the destination, so no root is needed — and root would fail
+# anyway, because the container drops every capability including DAC_OVERRIDE.
+sudo docker compose run --rm --no-deps --entrypoint sh \
   -v "$dest:/backup" \
   opencode -c "umask 077; tar czf /backup/$name -C /home/dev/.local/share/opencode ."
 
