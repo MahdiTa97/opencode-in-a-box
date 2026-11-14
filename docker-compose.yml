@@ -41,9 +41,8 @@ services:
       # ... but the rules themselves are read-only single files on top of it.
       - ${HOST_HOME:-/home/you}/.config/opencode/opencode.jsonc:/home/dev/.config/opencode/opencode.jsonc:ro
       - ${HOST_HOME:-/home/you}/.config/opencode/opencode.json:/home/dev/.config/opencode/opencode.json:ro
-      # Only the two key files, never the directory.
-      - ${HOST_HOME:-/home/you}/.secrets/gateway.key:/home/dev/.secrets/gateway.key:ro
-      - ${HOST_HOME:-/home/you}/.secrets/openwebui.key:/home/dev/.secrets/openwebui.key:ro
+      # Credentials: the OpenCode console account lives in the oc-data volume.
+      # No gateway key files are mounted, so the overlay drops those providers.
       # Projects, read-write. Edit this line to mount a different root.
       - ${HOST_HOME:-/home/you}/projects:/work
       - oc-data:/home/dev/.local/share/opencode

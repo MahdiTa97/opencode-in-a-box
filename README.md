@@ -81,9 +81,16 @@ sudo docker compose exec opencode rm -f /home/dev/oc-one.json
 ```
 
 The last command should list `OpenCode Console  Personal  stored`. Keep the
-stored credential in the `oc-data` volume so it survives restarts. With this in
-place the two `~/.secrets/*.key` mounts can be removed from
-`docker-compose.yml` if you do not use that gateway at all.
+stored credential in the `oc-data` volume so it survives restarts.
+
+Gateway key files are **not** mounted by default. The overlay drops any
+provider whose `apiKey` is a `{file:…}` reference that does not exist inside the
+container, and prints the dropped names to the container log. To use a gateway
+again, add a single-file mount for its key under `volumes:` and recreate:
+
+```yaml
+      - ${HOST_HOME:-/home/you}/.secrets/gateway.key:/home/dev/.secrets/gateway.key:ro
+```
 
 ## Troubleshooting
 

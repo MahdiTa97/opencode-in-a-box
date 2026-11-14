@@ -69,7 +69,7 @@ function deepMerge(base, extra) {
  * drop the host-attached `browse` MCP server and point `context7` at the
  * command that exists inside the image.
  */
-export function buildOverlay(sources, { context7Command }) {
+export function buildConfig(sources, { context7Command, fileExists = existsSync, home = "/home/dev" }) {
   const texts = Array.isArray(sources) ? sources : [sources];
   let config = {};
 
@@ -91,7 +91,23 @@ export function buildOverlay(sources, { context7Command }) {
     }
   }
 
-  return JSON.stringify(config, null, 2) + "\n";
+  const dropped = [];
+  for (const [id, provider] of Object.entries(config.providers || {})) {
+    const apiKey = provider?.settings?.apiKey;
+    const reference = typeof apiKey === "string" ? apiKey.match(/^\{file:(.+)\}$/) : null;
+    if (!reference) continue;
+    const path = reference[1].replace(/^~(?=\/|$)/, home);
+    if (!fileExists(path)) {
+      delete config.providers[id];
+      dropped.push(id);
+    }
+  }
+
+  return { config, dropped };
+}
+
+export function buildOverlay(sources, options) {
+  return JSON.stringify(buildConfig(sources, options).config, null, 2) + "\n";
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -107,10 +123,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1);
   }
   const context7Command = process.env.CONTEXT7_COMMAND || "/usr/local/bin/context7-mcp";
-  const out = buildOverlay(
+  const { config, dropped } = buildConfig(
     sources.map((path) => readFileSync(path, "utf8")),
     { context7Command },
   );
+  if (dropped.length > 0) {
+    console.error(`overlay: dropped providers with no key in this container: ${dropped.join(", ")}`);
+  }
   mkdirSync(dirname(dest), { recursive: true });
-  writeFileSync(dest, out, { mode: 0o600 });
+  writeFileSync(dest, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
 }

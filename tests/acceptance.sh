@@ -15,14 +15,14 @@ check() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else bad "$1"; fi; }
 uid_inside="$(docker compose exec -T opencode id -u 2>/dev/null | tr -d '\r')"
 [ "$uid_inside" = "$HOST_UID" ] && ok "1: uid $uid_inside matches host" || bad "1: uid '$uid_inside' != $HOST_UID"
 
-# 2. no ~/.ssh, only the two key files
+# 2. no ~/.ssh, and no gateway credentials inside the container at all
 docker compose exec -T opencode sh -c 'ls /home/dev/.ssh' >/dev/null 2>&1 && bad "2a: /home/dev/.ssh is visible" || ok "2a: no ~/.ssh"
-nkeys="$(docker compose exec -T opencode sh -c 'ls /home/dev/.secrets | wc -l' 2>/dev/null | tr -d '\r')"
-[ "$nkeys" = "2" ] && ok "2b: exactly 2 key files mounted" || bad "2b: $nkeys files in ~/.secrets"
+nkeys="$(docker compose exec -T opencode sh -c 'ls -A /home/dev/.secrets 2>/dev/null | wc -l' 2>/dev/null | tr -d '\r')"
+[ "$nkeys" = "0" ] && ok "2b: no key files in the container" || bad "2b: $nkeys files in ~/.secrets"
 
-# 3. the accepted trade-off: key is readable inside
-check "3: key readable by the agent (accepted risk)" \
-  "docker compose exec -T opencode python3 -c \"print(len(open('/home/dev/.secrets/gateway.key').read()))\""
+# 3. the overlay dropped the providers whose keys are not mounted
+dropped="$(docker compose exec -T opencode sh -c 'grep -c "\"gateway\"" /home/dev/.cache/opencode/container/opencode.jsonc || true' 2>/dev/null | tr -d '\r')"
+[ "$dropped" = "0" ] && ok "3: gateway providers dropped from the overlay" || bad "3: gateway still present in the overlay"
 
 # 4. config file is read-only even for an interpreter
 docker compose exec -T opencode python3 -c "open('/home/dev/.config/opencode/opencode.jsonc','a').write('')" >/dev/null 2>&1 \
@@ -55,16 +55,11 @@ read_uid="$(tr -d '\r' < /tmp/.acc-uid)"
 docker compose exec -T opencode rm -f /work/.acceptance-uid >/dev/null 2>&1
 
 # 12. a usable provider credential is present
-if docker compose exec -T opencode sh -c '[ -s /home/dev/.secrets/gateway.key ]' 2>/dev/null; then
-  code="$(docker compose exec -T opencode sh -c 'curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $(cat /home/dev/.secrets/gateway.key)" https://llm.example.com/v1/models' 2>/dev/null | tr -d '\r')"
-  [ "$code" = "200" ] && ok "12: gateway provider authorised (HTTP 200)" || bad "12: gateway provider returned '$code'"
+accounts="$(docker compose exec -T opencode opencode auth list 2>/dev/null | tr -d '\r')"
+if printf '%s' "$accounts" | grep -qi "console\|opencode"; then
+  ok "12: console account stored in the container"
 else
-  accounts="$(docker compose exec -T opencode opencode auth list 2>/dev/null | tr -d '\r')"
-  if printf '%s' "$accounts" | grep -qi "console\|opencode"; then
-    ok "12: console account stored in the container"
-  else
-    bad "12: no usable provider credential (empty gateway key, no console account)"
-  fi
+  bad "12: no console account in the container"
 fi
 
 echo
