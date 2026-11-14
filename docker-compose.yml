@@ -1,0 +1,85 @@
+name: opencode-docker
+
+services:
+  # One-shot: gives the named volumes to the host user, then exits.
+  init:
+    build:
+      context: .
+      args:
+        UID: ${HOST_UID:-1000}
+        GID: ${HOST_GID:-1000}
+    image: opencode-docker-opencode:local
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R ${HOST_UID:-1000}:${HOST_GID:-1000} /data /cache"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - oc-data:/data
+      - oc-cache:/cache
+    restart: "no"
+
+  opencode:
+    image: opencode-docker-opencode:local
+    env_file: [.env]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    init: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    pids_limit: 1024
+    mem_limit: 4g
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    networks: [edge, egress]
+    volumes:
+      # Config directory is writable (plugins install node_modules there) ...
+      - ${HOME}/.config/opencode:/home/dev/.config/opencode
+      # ... but the rules themselves are read-only single files on top of it.
+      - ${HOME}/.config/opencode/opencode.jsonc:/home/dev/.config/opencode/opencode.jsonc:ro
+      - ${HOME}/.config/opencode/opencode.json:/home/dev/.config/opencode/opencode.json:ro
+      # Only the two key files, never the directory.
+      - ${HOME}/.secrets/gateway.key:/home/dev/.secrets/gateway.key:ro
+      - ${HOME}/.secrets/openwebui.key:/home/dev/.secrets/openwebui.key:ro
+      # Projects, read-write. Edit this line to mount a different root.
+      - ${HOME}/projects:/work
+      - oc-data:/home/dev/.local/share/opencode
+      - oc-cache:/home/dev/.cache/opencode
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -u \"opencode:$$OPENCODE_PASSWORD\" http://127.0.0.1:4097/api/info"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  nginx:
+    image: nginx:1.27-alpine
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID", "NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "[::1]:8080:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [opencode]
+    networks: [edge]
+    restart: unless-stopped
+
+networks:
+  edge:
+    internal: true
+  egress:
+
+volumes:
+  oc-data:
+  oc-cache:
