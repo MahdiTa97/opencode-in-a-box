@@ -27,7 +27,7 @@ RUN set -eu; \
     else \
       useradd --create-home --uid "${UID}" --gid "${GID}" --shell /bin/bash dev; \
     fi; \
-    mkdir -p /work /home/dev/.secrets; \
+    mkdir -p /work /home/dev/.secrets /home/dev/.local/share/opencode /home/dev/.local/state /home/dev/.cache/opencode; \
     chown -R dev:dev /home/dev /work
 
 # The host's hardened policy layer, baked in. The user config cannot loosen it.
