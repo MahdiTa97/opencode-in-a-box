@@ -207,3 +207,21 @@ rules cannot be rewritten from inside even by an interpreter.
 - Docker is not a VM; the project mount is fully writable, so a hostile
   `package.json` still runs.
 - Outbound internet is unrestricted; a leaked key is possible in principle.
+
+## Context7 rate limits
+
+The `context7` MCP server runs inside the container. With no key it is
+anonymous, so Context7 answers "using Context7 anonymously" and throttles.
+Inside the container there is no browser to sign in with, and `npx ctx7 setup`
+would rewrite a config that is regenerated on every start, so the key goes in
+`.env` instead:
+
+```bash
+printf 'CONTEXT7_API_KEY=%s\n' 'YOUR_KEY' >> .env
+sudo docker compose build && sudo docker compose up -d --force-recreate
+docker logs opencode-docker-opencode-1 2>&1 | grep 'context7 will use'
+```
+
+`overlay.mjs` copies the key into the generated config's
+`mcp.servers.context7.environment`, which is written `0600` into the `oc-cache`
+volume.

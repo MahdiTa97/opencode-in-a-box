@@ -10,12 +10,26 @@ if [ -z "${OPENCODE_PASSWORD:-}" ]; then
 fi
 
 CONFIG_DIR="${HOME}/.config/opencode"
+HOST_CONFIG_DIR="${HOST_CONFIG_DIR:-/home/dev/host-config}"
 OVERLAY="${HOME}/.cache/opencode/container/opencode.jsonc"
+
+# The container's global config directory holds only the things OpenCode reads
+# from it (skills, agents, commands, AGENTS.md). The config files themselves are
+# never placed here: OPENCODE_CONFIG only overrides the keys it defines, so a
+# host global config would leak `browse` and credential-less providers into the
+# running server.
+mkdir -p "$CONFIG_DIR"
+for entry in skills agents commands AGENTS.md; do
+  if [ -e "${HOST_CONFIG_DIR}/${entry}" ]; then
+    rm -rf "${CONFIG_DIR:?}/${entry}"
+    cp -R "${HOST_CONFIG_DIR}/${entry}" "${CONFIG_DIR}/${entry}"
+  fi
+done
 
 # The host keeps providers in opencode.jsonc and MCP servers in opencode.json;
 # merge both, in that order.
 node /usr/local/lib/opencode-docker/overlay.mjs "$OVERLAY" \
-  "${CONFIG_DIR}/opencode.json" "${CONFIG_DIR}/opencode.jsonc"
+  "${HOST_CONFIG_DIR}/opencode.json" "${HOST_CONFIG_DIR}/opencode.jsonc"
 export OPENCODE_CONFIG="$OVERLAY"
 
 # Idempotent; persisted in the oc-data volume so restarts keep the same values.

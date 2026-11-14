@@ -102,3 +102,21 @@ test("never drops a provider that carries no key reference", () => {
   assert.deepEqual(dropped, []);
   assert.deepEqual(Object.keys(config.providers), ["console"]);
 });
+
+test("passes the Context7 API key to the MCP server when one is configured", () => {
+  const { config } = buildConfig([JSONC, MCP_JSON], {
+    context7Command: CTX7,
+    context7ApiKey: "ctx7-test-key",
+    fileExists: () => true,
+  });
+  assert.equal(config.mcp.servers.context7.environment.CONTEXT7_API_KEY, "ctx7-test-key");
+  assert.deepEqual(config.mcp.servers.context7.command, [CTX7]);
+});
+
+test("leaves the MCP environment untouched when no Context7 key is configured", () => {
+  const { config } = buildConfig([JSONC, MCP_JSON], {
+    context7Command: CTX7,
+    fileExists: () => true,
+  });
+  assert.equal(config.mcp.servers.context7.environment, undefined);
+});

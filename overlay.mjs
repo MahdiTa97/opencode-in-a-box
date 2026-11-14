@@ -69,7 +69,10 @@ function deepMerge(base, extra) {
  * drop the host-attached `browse` MCP server and point `context7` at the
  * command that exists inside the image.
  */
-export function buildConfig(sources, { context7Command, fileExists = existsSync, home = "/home/dev" }) {
+export function buildConfig(
+  sources,
+  { context7Command, context7ApiKey, fileExists = existsSync, home = "/home/dev" },
+) {
   const texts = Array.isArray(sources) ? sources : [sources];
   let config = {};
 
@@ -88,6 +91,12 @@ export function buildConfig(sources, { context7Command, fileExists = existsSync,
     delete servers.browse;
     if (servers.context7) {
       servers.context7.command = [context7Command];
+      if (context7ApiKey) {
+        servers.context7.environment = {
+          ...(servers.context7.environment || {}),
+          CONTEXT7_API_KEY: context7ApiKey,
+        };
+      }
     }
   }
 
@@ -122,13 +131,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.error("overlay: no host config found; writing a minimal config");
   }
   const context7Command = process.env.CONTEXT7_COMMAND || "/usr/local/bin/context7-mcp";
+  const context7ApiKey = process.env.CONTEXT7_API_KEY || undefined;
   const { config, dropped } = buildConfig(
     sources.length ? sources.map((path) => readFileSync(path, "utf8")) : ["{}"],
-    { context7Command },
+    { context7Command, context7ApiKey },
   );
   if (dropped.length > 0) {
     console.error(`overlay: dropped providers with no key in this container: ${dropped.join(", ")}`);
   }
+  console.error(
+    context7ApiKey
+      ? "overlay: context7 will use the configured API key"
+      : "overlay: context7 runs anonymously (rate-limited); set CONTEXT7_API_KEY to raise the limit",
+  );
   mkdirSync(dirname(dest), { recursive: true });
   writeFileSync(dest, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
 }

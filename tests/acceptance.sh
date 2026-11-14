@@ -24,9 +24,25 @@ nkeys="$(docker compose exec -T opencode sh -c 'ls -A /home/dev/.secrets 2>/dev/
 dropped="$(docker compose exec -T opencode sh -c 'grep -c "\"gateway\"" /home/dev/.cache/opencode/container/opencode.jsonc || true' 2>/dev/null | tr -d '\r')"
 [ "$dropped" = "0" ] && ok "3: gateway providers dropped from the overlay" || bad "3: gateway still present in the overlay"
 
-# 4. config file is read-only even for an interpreter
-docker compose exec -T opencode python3 -c "open('/home/dev/.config/opencode/opencode.jsonc','a').write('')" >/dev/null 2>&1 \
-  && bad "4: config file is writable" || ok "4: config file is read-only"
+# 3b/3c. and the *running* server agrees — the host config must not load as global
+api() { docker compose exec -T opencode sh -c "curl -s -u \"opencode:\$OPENCODE_PASSWORD\" http://127.0.0.1:4097$1" 2>/dev/null; }
+mcp_names="$(api /api/mcp | tr -d '\r' | grep -o '"name":"[^"]*"' | tr '\n' ' ')"
+case "$mcp_names" in
+  *browse*) bad "3b: browse MCP reached the running server ($mcp_names)";;
+  *) ok "3b: no browse MCP in the running server";;
+esac
+prov_ids="$(api /api/provider | tr -d '\r' | grep -o '"id":"[^"]*"' | tr '\n' ' ')"
+case "$prov_ids" in
+  *gateway*|*openwebui*) bad "3c: gateway provider still registered ($prov_ids)";;
+  *) ok "3c: no gateway provider in the running server";;
+esac
+
+# 4. the host config file is read-only even for an interpreter, and no config
+#    file sits in the container's global config directory
+docker compose exec -T opencode python3 -c "open('/home/dev/host-config/opencode.jsonc','a').write('')" >/dev/null 2>&1 \
+  && bad "4a: host config file is writable" || ok "4a: host config file is read-only"
+stray="$(docker compose exec -T opencode sh -c 'ls /home/dev/.config/opencode/opencode.json /home/dev/.config/opencode/opencode.jsonc 2>/dev/null | wc -l' 2>/dev/null | tr -d '\r')"
+[ "$stray" = "0" ] && ok "4b: no config file in the global config dir" || bad "4b: global config dir holds $stray config file(s)"
 
 # 5-6. no privilege escalation tools
 docker compose exec -T opencode sh -c 'command -v sudo' >/dev/null 2>&1 && bad "5: sudo present" || ok "5: no sudo"
