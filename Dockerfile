@@ -35,6 +35,7 @@ COPY policy/opencode.json /etc/opencode/opencode.json
 RUN chown root:root /etc/opencode/opencode.json && chmod 644 /etc/opencode/opencode.json
 
 COPY overlay.mjs /usr/local/lib/opencode-docker/overlay.mjs
+COPY commands/ /usr/local/lib/opencode-docker/commands/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 

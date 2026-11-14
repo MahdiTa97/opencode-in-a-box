@@ -26,6 +26,13 @@ for entry in skills agents commands AGENTS.md; do
   fi
 done
 
+# Commands shipped with this image (currently `verify`) land on top of the
+# host's, so they exist on every machine without touching the host config.
+if [ -d /usr/local/lib/opencode-docker/commands ]; then
+  mkdir -p "${CONFIG_DIR}/commands"
+  cp -R /usr/local/lib/opencode-docker/commands/. "${CONFIG_DIR}/commands/"
+fi
+
 # The host keeps providers in opencode.jsonc and MCP servers in opencode.json;
 # merge both, in that order.
 node /usr/local/lib/opencode-docker/overlay.mjs "$OVERLAY" \

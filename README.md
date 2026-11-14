@@ -234,3 +234,57 @@ docker logs opencode-docker-opencode-1 2>&1 | grep 'context7 will use'
 `overlay.mjs` copies the key into the generated config's
 `mcp.servers.context7.environment`, which is written `0600` into the `oc-cache`
 volume.
+
+## Backups
+
+`oc-data` holds sessions, the stored account, and snapshots. Losing the volume
+loses all of it, so back it up before upgrades and before `docker compose down -v`.
+
+```bash
+./scripts/backup.sh                 # writes ./backups/oc-data-<timestamp>.tar.gz (0600)
+./scripts/restore.sh --check backups/oc-data-<timestamp>.tar.gz
+```
+
+Restore replaces the live volume, so it stops the container first and recreates
+everything afterwards:
+
+```bash
+./scripts/restore.sh backups/oc-data-<timestamp>.tar.gz
+sudo bash tests/acceptance.sh
+```
+
+The scripts run inside the project's own image, so they need no extra pull.
+`backups/` is git-ignored.
+
+## Log growth
+
+Every service has a `json-file` log limit (`max-size`, `max-file`), so a long
+running stack cannot fill the disk. The OpenCode server's own log inside the
+container is tailed by `docker logs`, so it is capped by the same setting.
+
+## Egress
+
+The container has unrestricted outbound access, which it needs for npm, git,
+and the model endpoint. If you want a deterministic allowlist, run a proxy and
+put it in `.env` (a compose `env_file`, so no edit to `docker-compose.yml`):
+
+```bash
+printf 'HTTPS_PROXY=http://127.0.0.1:3128\nHTTP_PROXY=http://127.0.0.1:3128\n' >> .env
+sudo docker compose up -d --force-recreate
+```
+
+`NO_PROXY` stays `localhost,127.0.0.1,::1` so the container keeps talking to its
+own server directly. OpenCode supports `HTTP_PROXY`, `HTTPS_PROXY`, `WS_PROXY`,
+`WSS_PROXY`, and `ALL_PROXY`.
+
+## /verify
+
+The image ships a `verify` command (`commands/verify.md`), copied into the
+container's command directory on every start. In a session type:
+
+```
+/verify
+```
+
+It runs the project's own type check, lint, and tests, and reports the real
+output; it is not allowed to call work complete while a check is red.

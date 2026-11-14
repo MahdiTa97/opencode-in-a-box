@@ -45,5 +45,5 @@ fi
 echo "password: .env (OPENCODE_PASSWORD)"
 echo "next:"
 echo "  sudo docker compose build"
-echo "  sudo docker compose up -d"
+echo "  sudo docker compose up -d --force-recreate"
 echo "  sudo docker compose exec opencode opencode pair --url http://opencode.localhost:8080"
