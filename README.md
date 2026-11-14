@@ -59,6 +59,21 @@ sudo docker compose exec opencode opencode pair --url http://opencode.localhost:
 sudo bash tests/acceptance.sh
 ```
 
+## Troubleshooting
+
+**`403 Forbidden` from `registry-1.docker.io` while building.** Docker Hub
+refuses metadata requests from some networks. Pull the two base images through
+a mirror and retag them locally, once:
+
+```bash
+sudo docker pull docker.arvancloud.ir/library/node:24-bookworm-slim
+sudo docker tag docker.arvancloud.ir/library/node:24-bookworm-slim node:24-bookworm-slim
+sudo docker pull docker.arvancloud.ir/library/nginx:1.27-alpine
+sudo docker tag docker.arvancloud.ir/library/nginx:1.27-alpine nginx:1.27-alpine
+```
+
+Then build without `--pull`, which is what asks Docker Hub for metadata.
+
 ## Logs, stop, destroy, upgrade
 
 ```bash
