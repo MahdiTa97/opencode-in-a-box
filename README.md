@@ -75,6 +75,10 @@ The image is built for JS/TS/frontend work and stays small:
 | `yarn` | 1.22.22 | classic |
 | `git`, `rg`, `jq`, `curl`, `python3` | distro | `python3` also serves `node-gyp` |
 
+The base image ships corepack shims at `/usr/local/bin/{yarn,yarnpkg,pnpm,pnpx}`.
+The Dockerfile removes them before installing the pinned versions; without that,
+`npm install -g yarn` fails with `EEXIST: file already exists`.
+
 `node_modules` built on the host inside `~/projects` are visible in the
 container, but native addons are **not** interchangeable if the host runs a
 different Node major. If something fails with `NODE_MODULE_VERSION`, run

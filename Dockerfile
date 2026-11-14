@@ -15,7 +15,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Pinned: upgrading OpenCode is an explicit edit of this line.
-RUN npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp@4.7.0 pnpm@12.18.0 yarn@1.22.22 \
+# The base image ships corepack shims at /usr/local/bin/{yarn,yarnpkg,pnpm,pnpx};
+# npm refuses to overwrite them, so drop them first and install real versions.
+RUN rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/pnpm /usr/local/bin/pnpx \
+ && npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp@4.7.0 pnpm@12.18.0 yarn@1.22.22 \
  && npm cache clean --force
 
 # Optional browser for e2e tests. Browsers live outside $HOME so a volume mount
