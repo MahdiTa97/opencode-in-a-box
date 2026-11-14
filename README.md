@@ -10,7 +10,8 @@ Plan: `docs/superpowers/plans/2026-11-14-opencode-docker.md`
 ## Requirements
 
 - Linux with Docker Engine and `docker compose` v2 (x86_64 or arm64).
-- About 1.5 GB of disk for the image and the two volumes.
+- About 1.5 GB of disk for the image and the two volumes (plus ~1.2 GB if you
+  build with `INSTALL_PLAYWRIGHT=1`).
 - Port 8080 free on loopback.
 - `sudo` for Docker commands, unless your user is in the `docker` group
   (this host deliberately is not — see *Policy layer*).
@@ -62,6 +63,37 @@ sudo docker compose exec opencode opencode pair --url http://opencode.localhost:
 
   The link is valid for 5 minutes; the session then lasts 30 days.
 - TUI from the host: `opencode --server http://opencode.localhost:8080`.
+
+## Toolchain
+
+The image is built for JS/TS/frontend work and stays small:
+
+| tool | version | notes |
+|------|---------|-------|
+| `node` | the base image's (`v24.x`) | includes `npm` |
+| `pnpm` | 12.18.0 | pinned, so a `pnpm-lock.yaml` behaves as on the host |
+| `yarn` | 1.22.22 | classic |
+| `git`, `rg`, `jq`, `curl`, `python3` | distro | `python3` also serves `node-gyp` |
+
+`node_modules` built on the host inside `~/projects` are visible in the
+container, but native addons are **not** interchangeable if the host runs a
+different Node major. If something fails with `NODE_MODULE_VERSION`, run
+`pnpm rebuild` (or delete `node_modules`) inside the container.
+
+### Browser for e2e tests
+
+Chromium is **off by default** because it adds ~1.2 GB. When you need
+Playwright:
+
+```bash
+sudo docker compose build --build-arg INSTALL_PLAYWRIGHT=1
+sudo docker compose up -d --force-recreate
+```
+
+Browsers are installed at `/opt/ms-playwright` (set via
+`PLAYWRIGHT_BROWSERS_PATH`), so a `$HOME` volume can never hide them. Projects
+should install `playwright` in their own `devDependencies`; the global install
+only provides the browser binaries.
 
 ## Verify
 

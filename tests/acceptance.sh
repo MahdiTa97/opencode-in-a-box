@@ -82,6 +82,13 @@ cred="$(docker compose exec -T opencode opencode auth list --format json 2>/dev/
   | jq -e '[.[] | .connections[]?] | length > 0' 2>/dev/null)"
 [ "$cred" = "true" ] && ok "12: a provider credential is stored" || bad "12: no provider credential stored"
 
+# 13. the JS/TS toolchain resolves inside the running container
+tc="$(docker compose exec -T opencode sh -c 'printf "%s|%s|%s" "$(node -v)" "$(pnpm -v)" "$(yarn -v)"' 2>/dev/null | tr -d '\r')"
+case "$tc" in
+  v2[4-9]*|12.*|1.22.*) ok "13: toolchain $tc" ;;
+  *) bad "13: toolchain '$tc' (want node v24+, pnpm 12.x, yarn 1.22.x)" ;;
+esac
+
 echo
 echo "passed=$PASS failed=$FAIL manual=$MANUAL"
 [ "$FAIL" -eq 0 ]

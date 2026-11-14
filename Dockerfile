@@ -3,14 +3,36 @@ FROM node:24-bookworm-slim
 ARG UID=1000
 ARG GID=1000
 
+# JS/TS/frontend toolchain. The base image already brings node and npm; the
+# package managers below are pinned so a project's lockfile behaves the same
+# inside the container as on the host.
+#   INSTALL_PLAYWRIGHT=1 adds Chromium for e2e tests (~1.2 GB); off by default.
+ARG INSTALL_PLAYWRIGHT=0
+
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git ripgrep curl ca-certificates jq python3 openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
 # Pinned: upgrading OpenCode is an explicit edit of this line.
-RUN npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp@4.7.0 \
+RUN npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp@4.7.0 pnpm@12.18.0 yarn@1.22.22 \
  && npm cache clean --force
+
+# Optional browser for e2e tests. Browsers live outside $HOME so a volume mount
+# can never hide them, and outside /tmp so the noexec tmpfs does not break them.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN if [ "${INSTALL_PLAYWRIGHT}" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 \
+        libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libgtk-3-0 \
+        libnspr4 libnss3 libx11-6 libxcomposite1 libxdamage1 libxext6 \
+        libxfixes3 libxkbcommon0 libxrandr2 xdg-utils \
+      && rm -rf /var/lib/apt/lists/* \
+      && npm install -g playwright@1.65.1 \
+      && playwright install --with-deps chromium \
+      && chmod -R a+rX /opt/ms-playwright \
+      && npm cache clean --force; \
+    fi
 
 # The base image already ships a user and group at 1000 (the `node` account),
 # so rename whatever occupies the host UID/GID instead of failing to create it.
