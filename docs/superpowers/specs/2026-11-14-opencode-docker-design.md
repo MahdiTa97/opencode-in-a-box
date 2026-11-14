@@ -111,11 +111,8 @@ and the user's config cannot loosen them from inside.
 
 | Host | Container | Mode |
 | --- | --- | --- |
-| `~/.config/opencode` | `/home/dev/.config/opencode` | rw (plugins need `node_modules`) |
-| `~/.config/opencode/opencode.jsonc` | same path | **ro single file** over the rw dir |
-| `~/.config/opencode/opencode.json` | same path | **ro single file** over the rw dir |
-| `~/.secrets/gateway.key` | `/home/dev/.secrets/gateway.key` | ro (single file) |
-| `~/.secrets/openwebui.key` | `/home/dev/.secrets/openwebui.key` | ro (single file) |
+| `~/.config/opencode` | `/home/dev/host-config` | **ro** (read at start, never written) |
+| `~/.secrets/<provider>.key` | `/home/dev/.secrets/<provider>.key` | not mounted by default; single-file ro mount if used |
 | project directories | `/work/<name>` | rw |
 | named volume `oc-data` | `/home/dev/.local/share/opencode` | rw |
 | named volume `oc-cache` | `/home/dev/.cache/opencode` | rw |
@@ -269,12 +266,12 @@ because that would break the app's pairing.
 ### Acceptance tests
 
 1. `sudo docker compose exec opencode id` shows a non-root UID matching the host.
-2. `ls ~/.ssh` inside the container fails (not mounted); `ls /home/dev/.secrets`
-   shows only the two mounted key files and nothing else.
-3. `python3 -c "print(open('/home/dev/.secrets/gateway.key').read())"` succeeds —
-   this is the accepted trade-off and must be demonstrated, not hidden.
-4. The same interpreter writing `~/.config/opencode/opencode.jsonc` fails with a
-   read-only filesystem error.
+2. `ls ~/.ssh` inside the container fails (not mounted); `/home/dev/.secrets`
+   is empty unless a key file was deliberately mounted.
+3. The same interpreter writing `/home/dev/host-config/opencode.jsonc` fails with
+   a read-only filesystem error.
+4. `/home/dev/.config/opencode` contains no `opencode.json(c)`, so the overlay and
+   `/etc/opencode` are the only configuration layers.
 5. `sudo` is absent inside the container.
 6. `docker` is absent inside the container.
 7. From the host, `curl http://127.0.0.1:8080/api/info` without credentials

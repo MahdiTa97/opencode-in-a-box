@@ -99,7 +99,7 @@ container, and prints the dropped names to the container log. To use a gateway
 again, add a single-file mount for its key under `volumes:` and recreate:
 
 ```yaml
-      - ${HOST_HOME}/.secrets/gateway.key:/home/dev/.secrets/gateway.key:ro
+      - ${HOST_HOME}/.secrets/<provider>.key:/home/dev/.secrets/<provider>.key:ro
 ```
 
 ## Accounts: login, switch, logout

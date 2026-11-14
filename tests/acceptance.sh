@@ -20,21 +20,26 @@ docker compose exec -T opencode sh -c 'ls /home/dev/.ssh' >/dev/null 2>&1 && bad
 nkeys="$(docker compose exec -T opencode sh -c 'ls -A /home/dev/.secrets 2>/dev/null | wc -l' 2>/dev/null | tr -d '\r')"
 [ "$nkeys" = "0" ] && ok "2b: no key files in the container" || bad "2b: $nkeys files in ~/.secrets"
 
-# 3. the overlay dropped the providers whose keys are not mounted
-dropped="$(docker compose exec -T opencode sh -c 'grep -c "\"gateway\"" /home/dev/.cache/opencode/container/opencode.jsonc || true' 2>/dev/null | tr -d '\r')"
-[ "$dropped" = "0" ] && ok "3: gateway providers dropped from the overlay" || bad "3: gateway still present in the overlay"
-
-# 3b/3c. and the *running* server agrees — the host config must not load as global
+# 3. providers the overlay dropped (their key file is not mounted) must be
+#    absent from the *running* server too, not just from the overlay file
 api() { docker compose exec -T opencode sh -c "curl -s -u \"opencode:\$OPENCODE_PASSWORD\" http://127.0.0.1:4097$1" 2>/dev/null; }
+dropped_ids="$(docker compose logs opencode 2>/dev/null | tr -d '\r' | sed -n 's/.*dropped providers[^:]*: //p' | tail -1)"
+if [ -z "$dropped_ids" ]; then
+  ok "3: no provider dropped (every referenced key file resolves)"
+else
+  prov_ids="$(api /api/provider | tr -d '\r' | grep -o '"id":"[^"]*"' | sed 's/.*:"//; s/"$//' | tr '\n' ' ')"
+  leftover=""
+  for id in $(printf '%s' "$dropped_ids" | tr ',' ' '); do
+    case " $prov_ids " in *" $id "*) leftover="$leftover $id";; esac
+  done
+  [ -z "$leftover" ] && ok "3: dropped providers absent from the running server" || bad "3: dropped provider(s) still registered:$leftover"
+fi
+
+# 3b. a host-only MCP server must not reach the running server either
 mcp_names="$(api /api/mcp | tr -d '\r' | grep -o '"name":"[^"]*"' | tr '\n' ' ')"
 case "$mcp_names" in
   *browse*) bad "3b: browse MCP reached the running server ($mcp_names)";;
   *) ok "3b: no browse MCP in the running server";;
-esac
-prov_ids="$(api /api/provider | tr -d '\r' | grep -o '"id":"[^"]*"' | tr '\n' ' ')"
-case "$prov_ids" in
-  *gateway*|*openwebui*) bad "3c: gateway provider still registered ($prov_ids)";;
-  *) ok "3c: no gateway provider in the running server";;
 esac
 
 # 4. the host config file is read-only even for an interpreter, and no config
