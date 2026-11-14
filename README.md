@@ -62,14 +62,22 @@ sudo bash tests/acceptance.sh
 ## Using OpenCode Go instead of a gateway key
 
 The container starts with no stored account, so the OpenCode Console login from
-the host has to be carried over once. Export only the active OpenCode
-credential and import it into the container (the JSON never touches the screen):
+the host has to be carried over once. Import through a file, not a pipe:
+`auth import` reading stdin inside `docker compose exec` silently imports
+nothing, while the same JSON as a file argument works.
 
 ```bash
 CLI=~/.config/ai.opencode.desktop/cli/2.3.0-x64/opencode-cli
-$CLI auth export | jq -c '[.[] | select(.integrationID=="opencode" and .active==true)]' \
-  | sudo docker compose exec -T opencode opencode auth import
+$CLI auth export > /tmp/oc-auth.json && chmod 600 /tmp/oc-auth.json
+jq -c '[.[] | select(.integrationID=="opencode" and .active==true)]' /tmp/oc-auth.json > /tmp/oc-one.json
+chmod 600 /tmp/oc-one.json
+
+sudo docker compose exec -T opencode sh -c 'cat > /home/dev/oc-one.json' < /tmp/oc-one.json
+sudo docker compose exec opencode opencode auth import /home/dev/oc-one.json
 sudo docker compose exec opencode opencode auth list
+
+rm -f /tmp/oc-auth.json /tmp/oc-one.json
+sudo docker compose exec opencode rm -f /home/dev/oc-one.json
 ```
 
 The last command should list `OpenCode Console  Personal  stored`. Keep the
