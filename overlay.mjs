@@ -119,12 +119,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const dest = args[0];
   const sources = args.slice(1).filter((path) => existsSync(path));
   if (sources.length === 0) {
-    console.error("no readable source config");
-    process.exit(1);
+    console.error("overlay: no host config found; writing a minimal config");
   }
   const context7Command = process.env.CONTEXT7_COMMAND || "/usr/local/bin/context7-mcp";
   const { config, dropped } = buildConfig(
-    sources.map((path) => readFileSync(path, "utf8")),
+    sources.length ? sources.map((path) => readFileSync(path, "utf8")) : ["{}"],
     { context7Command },
   );
   if (dropped.length > 0) {

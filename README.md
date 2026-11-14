@@ -7,22 +7,32 @@ as a fallback.
 Design: `docs/superpowers/specs/2026-11-14-opencode-docker-design.md`
 Plan: `docs/superpowers/plans/2026-11-14-opencode-docker.md`
 
+## Requirements
+
+- Linux with Docker Engine and `docker compose` v2 (x86_64 or arm64).
+- About 1.5 GB of disk for the image and the two volumes.
+- Port 8080 free on loopback.
+- `sudo` for Docker commands, unless your user is in the `docker` group
+  (this host deliberately is not — see *Policy layer*).
+- An OpenCode config at `~/.config/opencode/opencode.json(c)` is optional;
+  without one the container starts with a minimal config.
+
 ## One-time setup
 
-These host paths must already exist — Docker would otherwise create them
-root-owned when it bind-mounts:
-
 ```bash
-mkdir -p ~/projects ~/.config/opencode ~/.secrets
-```
-
-```bash
+git clone <this-repo> ~/opencode-docker
 cd ~/opencode-docker
-cp .env.example .env
-chmod 600 .env
-# set OPENCODE_PASSWORD in .env to something long:
-#   openssl rand -base64 24
+./setup.sh
 ```
+
+`setup.sh` creates `~/projects` and `~/.config/opencode` if missing, writes a
+`.env` with a random password, your `HOST_UID`/`HOST_GID`, and `HOST_HOME=$HOME`,
+then prints the next commands. It is safe to re-run: it only adds what is
+missing and never overwrites an existing value.
+
+`HOST_HOME` is required rather than defaulted, because `sudo docker` sets
+`HOME=/root` and a wrong value makes Docker create empty directories over your
+config files.
 
 The Docker socket is root-only on this host, so every command is `sudo docker`.
 Optional alias:
@@ -89,8 +99,40 @@ container, and prints the dropped names to the container log. To use a gateway
 again, add a single-file mount for its key under `volumes:` and recreate:
 
 ```yaml
-      - ${HOST_HOME:-/home/you}/.secrets/gateway.key:/home/dev/.secrets/gateway.key:ro
+      - ${HOST_HOME}/.secrets/gateway.key:/home/dev/.secrets/gateway.key:ro
 ```
+
+## Accounts: login, switch, logout
+
+Everything the container knows about accounts lives in the `oc-data` volume, not
+on the host, so you manage it from inside the container. Use `-it`: the login
+flow prints a URL and a code you open in your host browser.
+
+```bash
+# what is stored, and which account is active
+sudo docker compose exec opencode opencode auth list
+
+# add an account (a second login adds a second account, it does not replace)
+sudo docker compose exec -it opencode opencode auth login opencode
+
+# switch the active account (no name opens a picker)
+sudo docker compose exec -it opencode opencode auth switch opencode "Personal"
+
+# log out one account (no name opens a picker)
+sudo docker compose exec -it opencode opencode auth logout opencode "Personal"
+```
+
+`auth login <target>` also takes `--method <id>` and repeated `--answer key=value`
+for providers that use an API key instead of a browser flow, for example:
+
+```bash
+sudo docker compose exec -it opencode opencode auth login deepseek --answer apiKey=sk-...
+```
+
+Host accounts stay completely separate: logging out inside the container never
+touches the desktop app's own credentials. To move the host's active Console
+account in, use the export/import recipe above; to go the other way, run
+`opencode auth export` inside the container and `opencode auth import` on the host.
 
 ## Troubleshooting
 

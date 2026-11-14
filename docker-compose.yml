@@ -37,14 +37,14 @@ services:
     networks: [edge, egress]
     volumes:
       # Config directory is writable (plugins install node_modules there) ...
-      - ${HOST_HOME:-/home/you}/.config/opencode:/home/dev/.config/opencode
+      - ${HOST_HOME:?HOST_HOME is not set - run ./setup.sh}/.config/opencode:/home/dev/.config/opencode
       # ... but the rules themselves are read-only single files on top of it.
-      - ${HOST_HOME:-/home/you}/.config/opencode/opencode.jsonc:/home/dev/.config/opencode/opencode.jsonc:ro
-      - ${HOST_HOME:-/home/you}/.config/opencode/opencode.json:/home/dev/.config/opencode/opencode.json:ro
+      - ${HOST_HOME:?HOST_HOME is not set - run ./setup.sh}/.config/opencode/opencode.jsonc:/home/dev/.config/opencode/opencode.jsonc:ro
+      - ${HOST_HOME:?HOST_HOME is not set - run ./setup.sh}/.config/opencode/opencode.json:/home/dev/.config/opencode/opencode.json:ro
       # Credentials: the OpenCode console account lives in the oc-data volume.
       # No gateway key files are mounted, so the overlay drops those providers.
       # Projects, read-write. Edit this line to mount a different root.
-      - ${HOST_HOME:-/home/you}/projects:/work
+      - ${HOST_HOME:?HOST_HOME is not set - run ./setup.sh}/projects:/work
       - oc-data:/home/dev/.local/share/opencode
       - oc-cache:/home/dev/.cache/opencode
     restart: unless-stopped
