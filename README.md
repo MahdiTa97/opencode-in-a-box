@@ -59,6 +59,24 @@ sudo docker compose exec opencode opencode pair --url http://opencode.localhost:
 sudo bash tests/acceptance.sh
 ```
 
+## Using OpenCode Go instead of a gateway key
+
+The container starts with no stored account, so the OpenCode Console login from
+the host has to be carried over once. Export only the active OpenCode
+credential and import it into the container (the JSON never touches the screen):
+
+```bash
+CLI=~/.config/ai.opencode.desktop/cli/2.3.0-x64/opencode-cli
+$CLI auth export | jq -c '[.[] | select(.integrationID=="opencode" and .active==true)]' \
+  | sudo docker compose exec -T opencode opencode auth import
+sudo docker compose exec opencode opencode auth list
+```
+
+The last command should list `OpenCode Console  Personal  stored`. Keep the
+stored credential in the `oc-data` volume so it survives restarts. With this in
+place the two `~/.secrets/*.key` mounts can be removed from
+`docker-compose.yml` if you do not use that gateway at all.
+
 ## Troubleshooting
 
 **`403 Forbidden` from `registry-1.docker.io` while building.** Docker Hub

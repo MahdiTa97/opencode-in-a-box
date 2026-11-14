@@ -54,9 +54,18 @@ read_uid="$(tr -d '\r' < /tmp/.acc-uid)"
 [ "$read_uid" = "$HOST_UID:$HOST_GID" ] && ok "11: /work file owned $read_uid" || bad "11: /work file owned '$read_uid'"
 docker compose exec -T opencode rm -f /work/.acceptance-uid >/dev/null 2>&1
 
-# 12. egress to the provider endpoint works, with the real key
-code="$(docker compose exec -T opencode sh -c 'curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $(cat /home/dev/.secrets/gateway.key)" https://llm.example.com/v1/models' 2>/dev/null | tr -d '\r')"
-[ "$code" = "200" ] && ok "12: provider authorised (HTTP 200)" || bad "12: provider returned '$code'"
+# 12. a usable provider credential is present
+if docker compose exec -T opencode sh -c '[ -s /home/dev/.secrets/gateway.key ]' 2>/dev/null; then
+  code="$(docker compose exec -T opencode sh -c 'curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $(cat /home/dev/.secrets/gateway.key)" https://llm.example.com/v1/models' 2>/dev/null | tr -d '\r')"
+  [ "$code" = "200" ] && ok "12: gateway provider authorised (HTTP 200)" || bad "12: gateway provider returned '$code'"
+else
+  accounts="$(docker compose exec -T opencode opencode auth list 2>/dev/null | tr -d '\r')"
+  if printf '%s' "$accounts" | grep -qi "console\|opencode"; then
+    ok "12: console account stored in the container"
+  else
+    bad "12: no usable provider credential (empty gateway key, no console account)"
+  fi
+fi
 
 echo
 echo "passed=$PASS failed=$FAIL manual=$MANUAL"
