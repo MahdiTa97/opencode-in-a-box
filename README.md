@@ -9,6 +9,13 @@ Plan: `docs/superpowers/plans/2026-11-14-opencode-docker.md`
 
 ## One-time setup
 
+These host paths must already exist — Docker would otherwise create them
+root-owned when it bind-mounts:
+
+```bash
+mkdir -p ~/projects ~/.config/opencode ~/.secrets
+```
+
 ```bash
 cd ~/opencode-docker
 cp .env.example .env
@@ -63,8 +70,11 @@ sudo docker compose down -v              # destroy sessions, snapshots and cache
 Upgrade: edit the pinned `@opencode/cli@2.3.0` in the `Dockerfile`, then
 
 ```bash
-sudo docker compose build --pull && sudo docker compose up -d
+sudo docker compose build --pull && sudo docker compose up -d --force-recreate
 ```
+
+nginx resolves the `opencode` hostname once at startup, so it must be recreated
+together with the server, or the UI returns 502 until it restarts.
 
 ## Password rotation
 

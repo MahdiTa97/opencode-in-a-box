@@ -13,7 +13,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command: ["chown -R ${HOST_UID:-1000}:${HOST_GID:-1000} /data /cache"]
     cap_drop: ["ALL"]
-    cap_add: ["CHOWN"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE"]
     security_opt: ["no-new-privileges:true"]
     volumes:
       - oc-data:/data

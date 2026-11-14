@@ -54,9 +54,9 @@ read_uid="$(tr -d '\r' < /tmp/.acc-uid)"
 [ "$read_uid" = "$HOST_UID:$HOST_GID" ] && ok "11: /work file owned $read_uid" || bad "11: /work file owned '$read_uid'"
 docker compose exec -T opencode rm -f /work/.acceptance-uid >/dev/null 2>&1
 
-# 12. egress to the provider endpoint works
-code="$(docker compose exec -T opencode curl -s -o /dev/null -w '%{http_code}' https://llm.example.com/v1/models 2>/dev/null)"
-[ -n "$code" ] && [ "$code" != "000" ] && ok "12: provider reachable (HTTP $code)" || bad "12: provider unreachable"
+# 12. egress to the provider endpoint works, with the real key
+code="$(docker compose exec -T opencode sh -c 'curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $(cat /home/dev/.secrets/gateway.key)" https://llm.example.com/v1/models' 2>/dev/null | tr -d '\r')"
+[ "$code" = "200" ] && ok "12: provider authorised (HTTP 200)" || bad "12: provider returned '$code'"
 
 echo
 echo "passed=$PASS failed=$FAIL manual=$MANUAL"

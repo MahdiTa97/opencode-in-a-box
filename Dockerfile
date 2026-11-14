@@ -9,7 +9,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Pinned: upgrading OpenCode is an explicit edit of this line.
-RUN npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp \
+RUN npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp@4.7.0 \
  && npm cache clean --force
 
 # The base image already ships a user and group at 1000 (the `node` account),
