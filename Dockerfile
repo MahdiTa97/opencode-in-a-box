@@ -12,10 +12,23 @@ RUN apt-get update \
 RUN npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp \
  && npm cache clean --force
 
-RUN groupadd -g "${GID}" dev \
- && useradd --create-home --uid "${UID}" --gid "${GID}" --shell /bin/bash dev \
- && mkdir -p /work /home/dev/.secrets \
- && chown dev:dev /work
+# The base image already ships a user and group at 1000 (the `node` account),
+# so rename whatever occupies the host UID/GID instead of failing to create it.
+RUN set -eu; \
+    if getent group "${GID}" >/dev/null; then \
+      [ "$(getent group "${GID}" | cut -d: -f1)" = "dev" ] || \
+        groupmod -n dev "$(getent group "${GID}" | cut -d: -f1)"; \
+    else \
+      groupadd -g "${GID}" dev; \
+    fi; \
+    if getent passwd "${UID}" >/dev/null; then \
+      [ "$(id -un "${UID}")" = "dev" ] || \
+        usermod -l dev --move-home -d /home/dev -g "${GID}" "$(id -un "${UID}")"; \
+    else \
+      useradd --create-home --uid "${UID}" --gid "${GID}" --shell /bin/bash dev; \
+    fi; \
+    mkdir -p /work /home/dev/.secrets; \
+    chown -R dev:dev /home/dev /work
 
 # The host's hardened policy layer, baked in. The user config cannot loosen it.
 COPY policy/opencode.json /etc/opencode/opencode.json
