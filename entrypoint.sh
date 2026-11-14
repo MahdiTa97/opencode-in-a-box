@@ -51,4 +51,24 @@ shutdown() {
 }
 trap shutdown TERM INT
 
-wait "$TAIL_PID"
+# Watchdog: the managed service is a child of this process, so if it dies the
+# container would otherwise stay "up" while serving nothing. Exit non-zero and
+# let Compose restart us.
+server_alive() {
+  for proc in /proc/[0-9]*; do
+    [ -r "${proc}/cmdline" ] || continue
+    if tr '\0' ' ' < "${proc}/cmdline" 2>/dev/null | grep -q 'serve --service'; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+while kill -0 "$TAIL_PID" 2>/dev/null; do
+  sleep 15
+  if ! server_alive; then
+    echo "opencode server process is gone; exiting so Compose can restart" >&2
+    exit 1
+  fi
+done
+

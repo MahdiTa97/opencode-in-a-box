@@ -70,13 +70,12 @@ read_uid="$(tr -d '\r' < /tmp/.acc-uid)"
 [ "$read_uid" = "$HOST_UID:$HOST_GID" ] && ok "11: /work file owned $read_uid" || bad "11: /work file owned '$read_uid'"
 docker compose exec -T opencode rm -f /work/.acceptance-uid >/dev/null 2>&1
 
-# 12. a usable provider credential is present
-accounts="$(docker compose exec -T opencode opencode auth list 2>/dev/null | tr -d '\r')"
-if printf '%s' "$accounts" | grep -qi "console\|opencode"; then
-  ok "12: console account stored in the container"
-else
-  bad "12: no console account in the container"
-fi
+# 12. a usable provider credential is stored in the container
+# `auth list --format json` is an array of {id,name,connections:[...]};
+# a stored credential is one entry inside a `connections` array.
+cred="$(docker compose exec -T opencode opencode auth list --format json 2>/dev/null | tr -d '\r' \
+  | jq -e '[.[] | .connections[]?] | length > 0' 2>/dev/null)"
+[ "$cred" = "true" ] && ok "12: a provider credential is stored" || bad "12: no provider credential stored"
 
 echo
 echo "passed=$PASS failed=$FAIL manual=$MANUAL"

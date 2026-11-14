@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -71,7 +71,18 @@ function deepMerge(base, extra) {
  */
 export function buildConfig(
   sources,
-  { context7Command, context7ApiKey, fileExists = existsSync, home = "/home/dev" },
+  {
+    context7Command,
+    context7ApiKey,
+    fileExists = (path) => {
+      try {
+        return statSync(path).isFile();
+      } catch {
+        return false;
+      }
+    },
+    home = "/home/dev",
+  },
 ) {
   const texts = Array.isArray(sources) ? sources : [sources];
   let config = {};
@@ -120,30 +131,51 @@ export function buildOverlay(sources, options) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const args = process.argv.slice(2);
-  if (args.length < 2) {
-    console.error("usage: overlay.mjs <dest> <source...>");
-    process.exit(2);
+  main(process.argv.slice(2));
+}
+
+function main(args) {
+  try {
+    if (args.length < 2) {
+      console.error("usage: overlay.mjs <dest> <source...>");
+      process.exit(2);
+    }
+    const dest = args[0];
+    const sources = [];
+    for (const path of args.slice(1)) {
+      let stats;
+      try {
+        stats = statSync(path);
+      } catch {
+        continue;
+      }
+      if (!stats.isFile()) throw new Error(`${path} is not a regular file`);
+      try {
+        sources.push(readFileSync(path, "utf8"));
+      } catch (error) {
+        throw new Error(`cannot read ${path}: ${error.code || error.message}`);
+      }
+    }
+    if (sources.length === 0) {
+      console.error("overlay: no host config found; writing a minimal config");
+    }
+    const { config, dropped } = buildConfig(sources.length ? sources : ["{}"], {
+      context7Command: process.env.CONTEXT7_COMMAND || "/usr/local/bin/context7-mcp",
+      context7ApiKey: process.env.CONTEXT7_API_KEY || undefined,
+    });
+    if (dropped.length > 0) {
+      console.error(`overlay: dropped providers with no key in this container: ${dropped.join(", ")}`);
+    }
+    console.error(
+      process.env.CONTEXT7_API_KEY
+        ? "overlay: context7 will use the configured API key"
+        : "overlay: context7 runs anonymously (rate-limited); set CONTEXT7_API_KEY to raise the limit",
+    );
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+    chmodSync(dest, 0o600);
+  } catch (error) {
+    console.error(`overlay: ${error.message}`);
+    process.exit(1);
   }
-  const dest = args[0];
-  const sources = args.slice(1).filter((path) => existsSync(path));
-  if (sources.length === 0) {
-    console.error("overlay: no host config found; writing a minimal config");
-  }
-  const context7Command = process.env.CONTEXT7_COMMAND || "/usr/local/bin/context7-mcp";
-  const context7ApiKey = process.env.CONTEXT7_API_KEY || undefined;
-  const { config, dropped } = buildConfig(
-    sources.length ? sources.map((path) => readFileSync(path, "utf8")) : ["{}"],
-    { context7Command, context7ApiKey },
-  );
-  if (dropped.length > 0) {
-    console.error(`overlay: dropped providers with no key in this container: ${dropped.join(", ")}`);
-  }
-  console.error(
-    context7ApiKey
-      ? "overlay: context7 will use the configured API key"
-      : "overlay: context7 runs anonymously (rate-limited); set CONTEXT7_API_KEY to raise the limit",
-  );
-  mkdirSync(dirname(dest), { recursive: true });
-  writeFileSync(dest, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
 }

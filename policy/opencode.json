@@ -154,6 +154,86 @@
       "action": "tool.use",
       "resource": "shell:mv */.config/opencode/*",
       "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:git push --force*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:git push -f *",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:rm -fr *",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:chmod 777 *",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:chmod -R 777 *",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:git reset --hard*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:git clean *",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:*>.config/opencode/*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:tee *..config/opencode/*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "edit:*/.git/*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "read:*.pem",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "read:*.key",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "external_directory:*/.ssh*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "external_directory:*/.secrets*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "external_directory:*/.aws*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "external_directory:*/.gnupg*",
+      "effect": "deny"
     }
   ]
 }

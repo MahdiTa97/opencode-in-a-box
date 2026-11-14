@@ -173,8 +173,17 @@ together with the server, or the UI returns 502 until it restarts.
 ## Password rotation
 
 1. Edit `OPENCODE_PASSWORD` in `.env`.
-2. `sudo docker compose up -d` (recreates the service container).
+2. `sudo docker compose up -d --force-recreate` — nginx caches the upstream
+   address and the healthcheck reads the new password at start, so both
+   containers must be recreated together.
 3. Re-pair the desktop app: old links and session cookies stop working.
+
+## IPv6
+
+The compose file publishes nginx on `127.0.0.1:8080` **and** `[::1]:8080`
+because `opencode.localhost` resolves to `::1` first on this host. On a machine
+with IPv6 disabled, delete the `[::1]:8080` line or `docker compose up` fails
+with an address-family error.
 
 ## Proxy
 
@@ -185,7 +194,7 @@ calls fail, set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` in `.env` (see
 ## Policy layer
 
 The image bakes `policy/opencode.json` to `/etc/opencode/opencode.json`
-(root-owned, read-only, 31 statements). **After changing the host's
+(root-owned, read-only, 47 statements). **After changing the host's
 `/etc/opencode/opencode.json`, re-copy it into `policy/` and rebuild**, or the
 container keeps enforcing the old rules:
 

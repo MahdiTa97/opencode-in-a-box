@@ -34,8 +34,9 @@ add_if_missing HOST_GID "$(id -g)"
 add_if_missing HOST_HOME "$HOME"
 chmod 600 .env
 
-if grep -q '^OPENCODE_PASSWORD=change-me$' .env; then
-  echo "warning: .env still uses the example password; change it" >&2
+if grep -qE '^OPENCODE_PASSWORD=(change-me)?$' .env; then
+  echo "error: .env has an empty or example OPENCODE_PASSWORD; set a real one" >&2
+  exit 1
 fi
 if [ ! -f "$HOME/.config/opencode/opencode.jsonc" ] && [ ! -f "$HOME/.config/opencode/opencode.json" ]; then
   echo "note: no host OpenCode config found; the container starts with a minimal one"

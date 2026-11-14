@@ -48,6 +48,7 @@ services:
       - oc-data:/home/dev/.local/share/opencode
       - oc-cache:/home/dev/.cache/opencode
     restart: unless-stopped
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -u \"opencode:$$OPENCODE_PASSWORD\" http://127.0.0.1:4097/api/info"]
       interval: 30s
@@ -70,7 +71,9 @@ services:
       - "[::1]:8080:8080"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on: [opencode]
+    depends_on:
+      opencode:
+        condition: service_healthy
     networks: [edge, egress]
     restart: unless-stopped
 
