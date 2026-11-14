@@ -194,7 +194,7 @@ calls fail, set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` in `.env` (see
 ## Policy layer
 
 The image bakes `policy/opencode.json` to `/etc/opencode/opencode.json`
-(root-owned, read-only, 47 statements). **After changing the host's
+(root-owned, read-only, 48 statements). **After changing the host's
 `/etc/opencode/opencode.json`, re-copy it into `policy/` and rebuild**, or the
 container keeps enforcing the old rules:
 

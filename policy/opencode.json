@@ -32,6 +32,11 @@
     },
     {
       "action": "tool.use",
+      "resource": "edit:*.env.*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
       "resource": "edit:*.env.example",
       "effect": "allow"
     },
@@ -197,7 +202,7 @@
     },
     {
       "action": "tool.use",
-      "resource": "shell:tee *..config/opencode/*",
+      "resource": "shell:tee */.config/opencode/*",
       "effect": "deny"
     },
     {
