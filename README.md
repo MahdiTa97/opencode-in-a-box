@@ -121,6 +121,10 @@ Upgrade: edit the pinned `@opencode/cli@2.3.0` in the `Dockerfile`, then
 sudo docker compose build --pull && sudo docker compose up -d --force-recreate
 ```
 
+`overlay.mjs` and `entrypoint.sh` are copied **into the image**, so editing them
+requires `docker compose build` before `up -d`; `up -d` alone keeps running the
+previous copy.
+
 nginx resolves the `opencode` hostname once at startup, so it must be recreated
 together with the server, or the UI returns 502 until it restarts.
 
