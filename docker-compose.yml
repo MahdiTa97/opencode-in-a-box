@@ -37,15 +37,15 @@ services:
     networks: [edge, egress]
     volumes:
       # Config directory is writable (plugins install node_modules there) ...
-      - ${HOME}/.config/opencode:/home/dev/.config/opencode
+      - ${HOST_HOME:-/home/you}/.config/opencode:/home/dev/.config/opencode
       # ... but the rules themselves are read-only single files on top of it.
-      - ${HOME}/.config/opencode/opencode.jsonc:/home/dev/.config/opencode/opencode.jsonc:ro
-      - ${HOME}/.config/opencode/opencode.json:/home/dev/.config/opencode/opencode.json:ro
+      - ${HOST_HOME:-/home/you}/.config/opencode/opencode.jsonc:/home/dev/.config/opencode/opencode.jsonc:ro
+      - ${HOST_HOME:-/home/you}/.config/opencode/opencode.json:/home/dev/.config/opencode/opencode.json:ro
       # Only the two key files, never the directory.
-      - ${HOME}/.secrets/gateway.key:/home/dev/.secrets/gateway.key:ro
-      - ${HOME}/.secrets/openwebui.key:/home/dev/.secrets/openwebui.key:ro
+      - ${HOST_HOME:-/home/you}/.secrets/gateway.key:/home/dev/.secrets/gateway.key:ro
+      - ${HOST_HOME:-/home/you}/.secrets/openwebui.key:/home/dev/.secrets/openwebui.key:ro
       # Projects, read-write. Edit this line to mount a different root.
-      - ${HOME}/projects:/work
+      - ${HOST_HOME:-/home/you}/projects:/work
       - oc-data:/home/dev/.local/share/opencode
       - oc-cache:/home/dev/.cache/opencode
     restart: unless-stopped

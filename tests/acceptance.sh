@@ -4,7 +4,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 PASS=0; FAIL=0; MANUAL=0
-HOST_UID="$(id -u)"; HOST_GID="$(id -g)"
+HOST_UID="${SUDO_UID:-$(id -u)}"; HOST_GID="${SUDO_GID:-$(id -g)}"
 
 ok()   { echo "PASS  $1"; PASS=$((PASS+1)); }
 bad()  { echo "FAIL  $1"; FAIL=$((FAIL+1)); }
