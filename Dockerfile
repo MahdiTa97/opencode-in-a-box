@@ -1,4 +1,8 @@
-FROM node:24-bookworm-slim
+# Base image pinned by digest: a tag can be re-pointed at different content,
+# a digest cannot. Override when building from a registry mirror:
+#   --build-arg NODE_IMAGE=docker.arvancloud.ir/library/node:24-bookworm-slim
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
+FROM ${NODE_IMAGE}
 
 ARG UID=1000
 ARG GID=1000
@@ -70,4 +74,11 @@ RUN chmod 755 /usr/local/bin/entrypoint.sh
 
 USER dev
 WORKDIR /work
+
+# The root filesystem is read-only at runtime, so every cache must live in a
+# writable mount: oc-cache is mounted at ~/.cache/opencode.
+ENV npm_config_cache=/home/dev/.cache/opencode/npm \
+    COREPACK_HOME=/home/dev/.cache/opencode/corepack \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

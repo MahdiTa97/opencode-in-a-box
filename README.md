@@ -212,17 +212,20 @@ account in, use the export/import recipe above; to go the other way, run
 ## Troubleshooting
 
 **`403 Forbidden` from `registry-1.docker.io` while building.** Docker Hub
-refuses metadata requests from some networks. Pull the two base images through
-a mirror and retag them locally, once:
+refuses metadata requests from some networks. Both base images are pinned by
+digest, so retagging a mirrored image under its old tag no longer satisfies the
+build — pull through the mirror and point the build at it instead:
 
 ```bash
 sudo docker pull docker.arvancloud.ir/library/node:24-bookworm-slim
-sudo docker tag docker.arvancloud.ir/library/node:24-bookworm-slim node:24-bookworm-slim
 sudo docker pull docker.arvancloud.ir/library/nginx:1.27-alpine
-sudo docker tag docker.arvancloud.ir/library/nginx:1.27-alpine nginx:1.27-alpine
+sudo docker compose build --build-arg NODE_IMAGE=docker.arvancloud.ir/library/node:24-bookworm-slim
+echo 'NGINX_IMAGE=docker.arvancloud.ir/library/nginx:1.27-alpine' >> .env
 ```
 
-Then build without `--pull`, which is what asks Docker Hub for metadata.
+Do not pass `--pull`: that is the request Docker Hub refuses. The trade-off is
+explicit — a mirror tag is not content-addressed, so the build is pinned only
+on machines that can reach Docker Hub.
 
 ## Logs, stop, destroy, upgrade
 
@@ -278,8 +281,52 @@ cp /etc/opencode/opencode.json policy/opencode.json
 sudo docker compose build && sudo docker compose up -d
 ```
 
-The user config is mounted read-only over the writable config directory, so
-rules cannot be rewritten from inside even by an interpreter.
+The host config directory is mounted read-only at `/home/dev/host-config`, never
+as the container's global config directory: `OPENCODE_CONFIG` only overrides the
+keys it defines, so a global config placed there would leak `browse` and
+credential-less providers into the running server. The overlay is regenerated
+from the host files at every start and served to the server as an extra layer.
+
+## Kernel and filesystem hardening
+
+Two layers sit below the OpenCode policy, because a policy is only as strong as
+the process enforcing it.
+
+**The root filesystem is read-only.** Nothing the agent writes survives in the
+image: uploaded scripts, `crontab`, `~/.bashrc`, a replaced binary — all fail
+with `Read-only file system`. Only these paths accept writes:
+
+| Path | Kind | Purpose |
+|---|---|---|
+| `/work` | host bind (rw) | your projects |
+| `/home/dev/.config` | tmpfs | rebuilt from the host config at every start |
+| `/home/dev/.local/state` | tmpfs | service settings, re-applied at every start |
+| `/home/dev/.local/share/opencode` | volume `oc-data` | sessions, credentials, snapshots |
+| `/home/dev/.cache/opencode` | volume `oc-cache` | plugins, npm/pnpm cache |
+| `/tmp` | tmpfs, `noexec` | scratch |
+
+**seccomp refuses the escape primitives.** `seccomp/opencode.json` starts from
+Docker's own default profile and removes 57 syscalls, then denies them with
+`EPERM`: `mount`, `umount2`, `pivot_root`, `chroot`, `setns`, `unshare`,
+`ptrace`, `process_vm_readv`/`writev`, `kcmp`, `bpf`, `perf_event_open`,
+`userfaultfd`, `io_uring_*`, `keyctl`/`add_key`, `kexec_load`, `init_module`,
+`open_by_handle_at`, `reboot`, `sethostname`, and friends. A normal Node build
+keeps every syscall it needs; the acceptance suite proves both directions
+(a file write to `/` fails, `ptrace` returns `EPERM`).
+
+`seccomp/docker-default.json` is vendored from `moby/profiles`. To change the
+deny list, edit `DENIED` in `scripts/gen-seccomp.mjs` and regenerate:
+
+```bash
+node scripts/gen-seccomp.mjs          # rewrite seccomp/opencode.json
+node scripts/gen-seccomp.mjs --check  # exit 1 if it drifted
+node --test tests/seccomp.test.mjs
+```
+
+**Images are pinned by digest,** not by tag, so a moved tag cannot swap the
+content that runs. `node` is pinned in the `NODE_IMAGE` build arg, `nginx` in
+`NGINX_IMAGE`; `scripts/check-updates.sh` prints the current pins and how to
+obtain fresh digests.
 
 ## Known costs
 
@@ -291,6 +338,11 @@ rules cannot be rewritten from inside even by an interpreter.
 - Docker is not a VM; the project mount is fully writable, so a hostile
   `package.json` still runs.
 - Outbound internet is unrestricted; a leaked key is possible in principle.
+- The root filesystem is read-only, so `apt-get install` inside the container
+  fails by design. Add packages in the `Dockerfile` and rebuild.
+- `/tmp` is `noexec`. A Playwright build (`INSTALL_PLAYWRIGHT=1`) may need
+  `exec` on that tmpfs for Chromium's sandbox helper; swap `noexec` for `exec`
+  in the `tmpfs` line if the browser refuses to start.
 
 ## Context7 rate limits
 

@@ -99,6 +99,34 @@ case "$tc" in
   *) bad "13: toolchain '$tc' (want node v24+, pnpm 12.x, yarn 1.22.x)" ;;
 esac
 
+# 17. the kernel refuses escape primitives (seccomp profile applied)
+seccomp_state="$(docker compose exec -T opencode sh -c 'grep "^Seccomp:" /proc/self/status' 2>/dev/null | tr -d '\r')"
+case "$seccomp_state" in
+  "Seccomp: 2"|"Seccomp: 2 (filter)") ok "17a: $seccomp_state" ;;
+  *) bad "17a: '$seccomp_state' (want Seccomp: 2)" ;;
+esac
+probe="$(docker compose exec -T opencode python3 -c \
+  'import ctypes; l=ctypes.CDLL(None, use_errno=True); r=l.ptrace(0,0,0,0); print(r, ctypes.get_errno())' \
+  2>/dev/null | tr -d '\r')"
+[ "$probe" = "-1 1" ] && ok "17b: ptrace refused with EPERM" || bad "17b: ptrace probe '$probe' (want '-1 1')"
+
+# 18. the image is immutable at runtime; only mounted paths accept writes
+docker compose exec -T opencode sh -c 'touch /.acceptance-ro' >/dev/null 2>&1 \
+  && bad "18a: the root filesystem is writable" || ok "18a: root filesystem is read-only"
+docker compose exec -T opencode sh -c 'touch "${HOME}/.config/.acceptance-rw"' >/dev/null 2>&1 \
+  && ok "18b: the config dir is writable" || bad "18b: the config dir is not writable"
+
+# 19. both images are pinned by digest, not by a movable tag
+node_ref="$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile | tail -1)"
+case "$node_ref" in
+  *@sha256:*) ok "19a: node base pinned (${node_ref##*@})" ;;
+  *) bad "19a: node base is not digest-pinned: '$node_ref'" ;;
+esac
+nginx_ref="$(grep -m1 'image:.*nginx' docker-compose.yml)"
+case "$nginx_ref" in
+  *@sha256:*) ok "19b: nginx image pinned" ;;
+  *) bad "19b: nginx image is not digest-pinned: $nginx_ref" ;;
+esac
+
 echo
-echo "passed=$PASS failed=$FAIL manual=$MANUAL"
 [ "$FAIL" -eq 0 ]

@@ -57,11 +57,17 @@ for pkg in @opencode/cli @upstash/context7-mcp pnpm yarn playwright; do
   printf '%-26s %-12s %-12s %s\n' "$pkg" "$pinned" "$latest" "$state"
 done
 
-base=$(grep -m1 '^FROM ' "$dockerfile" | awk '{print $2}')
 echo
-echo "base image: $base"
-echo "The tag floats within its minor (24.x). To pin it exactly, replace the tag"
-echo "with its digest: sudo docker pull $base && sudo docker inspect --format '{{index .RepoDigests 0}}' $base"
+node_pin=$(sed -n 's/^ARG NODE_IMAGE=//p' "$dockerfile" | tail -1)
+nginx_pin=$(grep -m1 'image:.*nginx' "$(dirname "$dockerfile")/docker-compose.yml" | sed 's/.*NGINX_IMAGE:-//; s/}.*//')
+echo "node base:  $node_pin"
+echo "nginx base: $nginx_pin"
+echo
+echo "Both are pinned by digest, so a rebuilt tag will not be picked up on its own."
+echo "To move to the current content of the tag:"
+echo "  sudo docker pull node:24-bookworm-slim"
+echo "  sudo docker inspect --format '{{index .RepoDigests 0}}' node:24-bookworm-slim"
+echo "  # paste the new sha256 into ARG NODE_IMAGE in Dockerfile (same for NGINX_IMAGE)"
 
 if [ "$status_all" -eq 1 ]; then
   echo
