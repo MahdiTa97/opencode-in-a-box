@@ -7,6 +7,10 @@ as a fallback.
 Design: `docs/superpowers/specs/2026-11-14-opencode-docker-design.md`
 Plan: `docs/superpowers/plans/2026-11-14-opencode-docker.md`
 
+Working in this repository with an agent? `AGENTS.md` is loaded automatically
+and lists the rules that are easy to break (what needs a rebuild, what is
+human-only, what must never be edited by hand).
+
 ## Requirements
 
 - Linux with Docker Engine and `docker compose` v2 (x86_64 or arm64).
