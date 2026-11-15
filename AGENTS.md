@@ -55,7 +55,7 @@ from it at every start.
 
 | What | Command |
 |---|---|
-| Unit tests | `node --test tests/*.test.mjs` |
+| Unit tests | `node --test tests/*.test.mjs` (inside the container: `TMPDIR=/work/.tmp node --test tests/*.test.mjs` — `/tmp` is `noexec` there) |
 | Shell syntax | `dash -n bin/oc` · `sh -n setup.sh scripts/*.sh entrypoint.sh` · `bash -n tests/acceptance.sh` |
 | Compose validity | `PROJECTS_DIR=… HOST_HOME=… docker compose config -q` |
 | Build and start | `./bin/oc up --build` |
@@ -107,6 +107,8 @@ from it at every start.
 | `sudo: The "no new privileges" flag is set` | desktop-app terminal sets `no_new_privs` | run docker commands in a normal terminal |
 | nginx `502` after a restart | nginx resolved the upstream IP at start | recreate nginx (`oc restart` does) |
 | App: `Failed to send prompt — Authentication required` | the app fell back to a host service on 4097 | re-pair with `./bin/oc pair`; see Troubleshooting |
+| A server row returns and new sessions land on `127.0.0.1:49374` after `service stop` | the desktop app ships and supervises its own `opencode-cli serve --service`, respawning it within a second | shadow the bundled binary so it ignores `--service`; see Troubleshooting |
+| Unit tests fail with `EACCES` on `bin/oc` inside the container | `/tmp` is a `noexec` tmpfs, and the tests copy scripts into `tmpdir()` to run them | point `TMPDIR` at an exec-capable path, e.g. `TMPDIR=/work/.tmp` |
 
 ## Definition of done
 

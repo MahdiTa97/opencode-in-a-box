@@ -272,7 +272,8 @@ sudo docker compose exec opencode opencode pair --url http://opencode.localhost:
 ```
 
 Paste the printed link into the app's server address field. With the stale
-`service.json` gone, any future fallback binds loopback only.
+`service.json` gone, any future fallback binds loopback only. If `:49374` comes
+back anyway, the app is restarting it — see the next entry.
 
 Why it happened: the server signs sessions with a secret it keeps in
 `~/.local/state`. That path used to be a tmpfs, so every `--force-recreate`
@@ -289,6 +290,34 @@ cd ~/opencode-docker
 curl -s -X POST -u "opencode:$(grep '^OPENCODE_PASSWORD=' .env | cut -d= -f2-)" \
   http://opencode.localhost:8080/api/pair | jq -r '.code'
 ```
+
+**The desktop app keeps starting its own local service.** The app bundles its
+own `opencode-cli` and runs `opencode-cli serve --service` on
+`127.0.0.1:49374` at every start. The app supervises that process and respawns
+it within a second, so `service stop`, deleting `service.json`, and clearing
+the app's `Local Storage` all leave it running: the server row reappears, and a
+new session is created there instead of in the container.
+
+Shadow the bundled binary so it refuses that one flag and passes everything
+else through:
+
+```bash
+cd ~/.config/ai.opencode.desktop/cli/*-x64    # the app's bundled CLI
+[ -s opencode-cli.real ] || cp opencode-cli opencode-cli.real
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "--service" ] && exit 0; done\nexec "$(dirname "$0")/opencode-cli.real" "$@"\n' > opencode-cli.shim
+chmod +x opencode-cli.shim && mv -f opencode-cli.shim opencode-cli
+pkill -f 'opencode-cli serve --service'
+```
+
+`mv` is required: writing over a running executable fails with `text file
+busy`. Renaming swaps the directory entry, so the running process keeps the old
+inode and the next start picks up the shim. `--version`, `api` and `service`
+still work because the shim forwards every other argument.
+
+The path is version-scoped. A desktop-app update installs a fresh
+`cli/<version>-x64` directory, the shim is gone with the old one, and the local
+service returns — re-run the block in the new directory. To undo it,
+`mv -f opencode-cli.real opencode-cli`.
 
 ## `oc` — one command instead of seven
 
