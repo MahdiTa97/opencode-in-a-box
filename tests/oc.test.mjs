@@ -1,0 +1,284 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, chmodSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+const REPO = path.resolve(import.meta.dirname, "..");
+
+// A shim records every call as "CALL <name>" followed by one "A <arg>" line per
+// argument, so tests can assert argument boundaries (spaces in paths) as well as
+// the command shape. Exit codes come from SHIM_<NAME>_EXIT, output from
+// SHIM_<NAME>_OUT.
+const SHIM = `#!/bin/sh
+name=$(basename "$0")
+{ printf 'CALL %s\\n' "$name"; for a in "$@"; do printf 'A %s\\n' "$a"; done; } >> "\${SHIM_LOG:?}"
+case "$name $1" in
+  "docker info") exit "\${SHIM_DOCKER_INFO_EXIT:-0}" ;;
+esac
+out="SHIM_\${name}_OUT"
+eval "printf '%s' \\"\\\${$out:-}\\""
+exit "\${SHIM_EXIT:-0}"
+`;
+
+function makeShims() {
+  const dir = mkdtempSync(path.join(tmpdir(), "oc-shim-"));
+  for (const name of ["docker", "sudo", "curl", "git", "sha256sum"]) {
+    if (name === "sha256sum") continue;
+    const p = path.join(dir, name);
+    writeFileSync(p, SHIM);
+    chmodSync(p, 0o755);
+  }
+  return dir;
+}
+
+function makeRepo({ env, scripts = {} } = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), "oc-repo-"));
+  mkdirSync(path.join(dir, "bin"));
+  mkdirSync(path.join(dir, "scripts"));
+  mkdirSync(path.join(dir, "policy"));
+  mkdirSync(path.join(dir, "seccomp"));
+  copyFileSync(path.join(REPO, "bin", "oc"), path.join(dir, "bin", "oc"));
+  chmodSync(path.join(dir, "bin", "oc"), 0o755);
+  copyFileSync(path.join(REPO, "docker-compose.yml"), path.join(dir, "docker-compose.yml"));
+  copyFileSync(path.join(REPO, "policy", "opencode.json"), path.join(dir, "policy", "opencode.json"));
+  copyFileSync(path.join(REPO, "seccomp", "opencode.json"), path.join(dir, "seccomp", "opencode.json"));
+  for (const [name, body] of Object.entries(scripts)) {
+    const p = path.join(dir, "scripts", name);
+    writeFileSync(p, body);
+    chmodSync(p, 0o755);
+  }
+  writeFileSync(
+    path.join(dir, ".env"),
+    env ??
+      "OPENCODE_PASSWORD=secret123\nHOST_UID=1000\nHOST_GID=1000\nHOST_HOME=/home/x\nPROJECTS_DIR=/home/x/projects\n"
+  );
+  chmodSync(path.join(dir, ".env"), 0o600);
+  return dir;
+}
+
+function oc(args, { repo, env = {}, cwd } = {}) {
+  const root = repo ?? makeRepo();
+  const shims = makeShims();
+  const log = path.join(shims, "log");
+  writeFileSync(log, "");
+  const res = spawnSync(path.join(root, "bin", "oc"), args, {
+    cwd: cwd ?? root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${shims}:${process.env.PATH}`,
+      SHIM_LOG: log,
+      ...env,
+    },
+  });
+  return {
+    code: res.status,
+    stdout: res.stdout ?? "",
+    stderr: res.stderr ?? "",
+    calls: readFileSync(log, "utf8"),
+    repo: root,
+  };
+}
+
+const hasCall = (calls, prog, ...args) =>
+  calls.includes(`CALL ${prog}\n`) && args.every((a) => calls.includes(`A ${a}\n`));
+
+test("help lists every command", () => {
+  const r = oc(["help"]);
+  assert.equal(r.code, 0);
+  for (const cmd of ["up", "down", "restart", "status", "pair", "shell", "logs", "backup", "restore", "audit", "config", "doctor"]) {
+    assert.match(r.stdout, new RegExp(`\\b${cmd}\\b`), `help must mention ${cmd}`);
+  }
+});
+
+test("unknown command is a usage error", () => {
+  const r = oc(["nonsense"]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /unknown command: nonsense/);
+});
+
+test("resolves the repo from the script path, not the caller's cwd", () => {
+  const elsewhere = mkdtempSync(path.join(tmpdir(), "oc-cwd-"));
+  const r = oc(["status"], { cwd: elsewhere });
+  assert.equal(r.code, 0);
+  assert.ok(hasCall(r.calls, "docker", "compose", "ps"), r.calls);
+});
+
+test("re-execs through sudo when the daemon is unreachable", () => {
+  const r = oc(["status"], { env: { SHIM_DOCKER_INFO_EXIT: "1" } });
+  assert.equal(r.code, 0);
+  assert.match(r.calls, /CALL sudo\n/);
+  assert.match(r.calls, /A status\n/);
+});
+
+test("OC_NO_SUDO=1 explains instead of prompting", () => {
+  const r = oc(["status"], { env: { SHIM_DOCKER_INFO_EXIT: "1", OC_NO_SUDO: "1" } });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /docker group/);
+  assert.doesNotMatch(r.calls, /CALL sudo\n/);
+});
+
+test("up waits for health", () => {
+  const r = oc(["up"]);
+  assert.equal(r.code, 0);
+  assert.ok(hasCall(r.calls, "docker", "compose", "up", "-d", "--wait", "--wait-timeout", "90"), r.calls);
+});
+
+test("up --build stamps the policy digest", () => {
+  const r = oc(["up", "--build"]);
+  assert.equal(r.code, 0);
+  assert.match(r.calls, /A --build-arg\nA POLICY_SHA=[0-9a-f]{64}\n/);
+  assert.ok(hasCall(r.calls, "docker", "compose", "up", "-d", "--wait", "--wait-timeout", "90"), r.calls);
+});
+
+test("up is idempotent", () => {
+  const repo = makeRepo();
+  const first = oc(["up"], { repo });
+  const second = oc(["up"], { repo });
+  assert.equal(first.code, 0);
+  assert.equal(second.code, 0);
+  assert.ok(hasCall(second.calls, "docker", "compose", "up", "-d", "--wait", "--wait-timeout", "90"));
+  assert.doesNotMatch(second.calls, /--force-recreate/);
+});
+
+test("down refuses --volumes without --yes, and touches nothing", () => {
+  const r = oc(["down", "--volumes"]);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /--yes/);
+  assert.equal(r.calls.trim(), "");
+});
+
+test("down --volumes --yes proceeds", () => {
+  const r = oc(["down", "--volumes", "--yes"]);
+  assert.equal(r.code, 0);
+  assert.ok(hasCall(r.calls, "docker", "compose", "down", "--volumes"), r.calls);
+});
+
+test("restart recreates rather than restarting", () => {
+  const r = oc(["restart"]);
+  assert.equal(r.code, 0);
+  assert.ok(hasCall(r.calls, "docker", "compose", "up", "-d", "--force-recreate", "--wait", "--wait-timeout", "90"), r.calls);
+});
+
+test("pair mints a link through the service", () => {
+  const r = oc(["pair"]);
+  assert.equal(r.code, 0);
+  assert.ok(
+    hasCall(r.calls, "docker", "compose", "exec", "-T", "opencode", "opencode", "pair", "--url", "http://opencode.localhost:8080"),
+    r.calls
+  );
+});
+
+test("shell defaults to bash and forwards a command line", () => {
+  const bare = oc(["shell"]);
+  assert.ok(hasCall(bare.calls, "docker", "compose", "exec", "opencode", "bash"), bare.calls);
+  const cmd = oc(["shell", "ls", "-l"]);
+  assert.ok(hasCall(cmd.calls, "docker", "compose", "exec", "opencode", "sh", "-lc", "ls -l"), cmd.calls);
+});
+
+test("logs forwards -f and --since", () => {
+  const r = oc(["logs", "-f", "--since", "2h"]);
+  assert.equal(r.code, 0);
+  assert.ok(hasCall(r.calls, "docker", "compose", "logs", "-f", "--since", "2h", "opencode"), r.calls);
+});
+
+test("backup forwards a destination with spaces as one argument", () => {
+  const repo = makeRepo({
+    scripts: { "backup.sh": '#!/bin/sh\n{ echo CALL backup; for a in "$@"; do echo "A $a"; done; } >> "$SHIM_LOG"\n' },
+  });
+  const r = oc(["backup", "/tmp/my backups"], { repo });
+  assert.equal(r.code, 0);
+  assert.match(r.calls, /A \/tmp\/my backups\n/);
+});
+
+test("restore --check forwards the archive", () => {
+  const repo = makeRepo({
+    scripts: { "restore.sh": '#!/bin/sh\n{ echo CALL restore; for a in "$@"; do echo "A $a"; done; } >> "$SHIM_LOG"\n' },
+  });
+  const r = oc(["restore", "--check", "backups/x.tar.gz"], { repo });
+  assert.equal(r.code, 0);
+  assert.match(r.calls, /A --check\nA backups\/x\.tar\.gz\n/);
+});
+
+test("restore without --yes refuses", () => {
+  const repo = makeRepo({
+    scripts: { "restore.sh": '#!/bin/sh\n{ echo CALL restore; } >> "$SHIM_LOG"\n' },
+  });
+  const r = oc(["restore", "backups/x.tar.gz"], { repo });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /--yes/);
+});
+
+test("audit forwards the window", () => {
+  const repo = makeRepo({
+    scripts: { "audit.sh": '#!/bin/sh\n{ echo CALL audit; for a in "$@"; do echo "A $a"; done; } >> "$SHIM_LOG"\n' },
+  });
+  const r = oc(["audit", "7d"], { repo });
+  assert.equal(r.code, 0);
+  assert.match(r.calls, /A 7d\n/);
+});
+
+test("config names the missing variable", () => {
+  const repo = makeRepo({ env: "OPENCODE_PASSWORD=secret123\nHOST_HOME=/home/x\n" });
+  const r = oc(["config"], { repo });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /PROJECTS_DIR/);
+});
+
+test("config accepts a complete env", () => {
+  const r = oc(["config"]);
+  assert.equal(r.code, 0);
+  assert.ok(hasCall(r.calls, "docker", "compose", "config", "-q"), r.calls);
+});
+
+test("doctor reports missing .env and exits 1", () => {
+  const repo = makeRepo();
+  spawnSync("rm", ["-f", path.join(repo, ".env")]);
+  const r = oc(["doctor"], { repo });
+  assert.equal(r.code, 1);
+  assert.match(r.stdout, /FAIL 1 /);
+});
+
+test("doctor passes the environment checks on a valid repo", () => {
+  const dir = makeRepo();
+  mkdirSync(path.join(dir, "projects"), { recursive: true });
+  // PROJECTS_DIR must point at a real directory for the check to pass
+  writeFileSync(
+    path.join(dir, ".env"),
+    `OPENCODE_PASSWORD=secret123\nHOST_UID=1000\nHOST_GID=1000\nHOST_HOME=${dir}\nPROJECTS_DIR=${dir}/projects\n`
+  );
+  const r = oc(["doctor"], { repo: dir });
+  assert.match(r.stdout, /PASS 1 /);
+  assert.match(r.stdout, /PASS 2 /);
+  assert.match(r.stdout, /PASS 3 /);
+});
+
+test("doctor fails when nginx does not answer 401", () => {
+  const dir = makeRepo();
+  mkdirSync(path.join(dir, "projects"), { recursive: true });
+  writeFileSync(
+    path.join(dir, ".env"),
+    `OPENCODE_PASSWORD=secret123\nHOST_UID=1000\nHOST_GID=1000\nHOST_HOME=${dir}\nPROJECTS_DIR=${dir}/projects\n`
+  );
+  const r = oc(["doctor"], { repo: dir, env: { SHIM_curl_OUT: "200" } });
+  assert.match(r.stdout, /FAIL 7 /);
+});
+
+test("doctor warns when the host floor is absent", () => {
+  const dir = makeRepo();
+  mkdirSync(path.join(dir, "projects"), { recursive: true });
+  writeFileSync(
+    path.join(dir, ".env"),
+    `OPENCODE_PASSWORD=secret123\nHOST_UID=1000\nHOST_GID=1000\nHOST_HOME=${dir}\nPROJECTS_DIR=${dir}/projects\n`
+  );
+  const r = oc(["doctor"], { repo: dir, env: { SHIM_curl_OUT: "401", OC_FLOOR: "/nonexistent/floor.json" } });
+  assert.match(r.stdout, /WARN 8 /);
+});
+
+test("the Dockerfile carries the policy digest label", () => {
+  const dockerfile = readFileSync(path.join(REPO, "Dockerfile"), "utf8");
+  assert.match(dockerfile, /LABEL org\.opencode-docker\.policy-sha=/);
+  assert.match(readFileSync(path.join(REPO, "bin", "oc"), "utf8"), /--build-arg/);
+});

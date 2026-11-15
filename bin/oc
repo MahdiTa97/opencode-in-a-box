@@ -1,0 +1,354 @@
+#!/bin/sh
+# oc — one entry point for this container.
+#
+# Every subcommand is a shortcut for an invocation this repo already owns;
+# nothing is reimplemented here. Safe to run twice, and safe to run from two
+# terminals at once: no state, no locks, no files written.
+set -eu
+
+REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$REPO"
+
+OC_URL=http://opencode.localhost:8080
+PASSED=0
+WARNED=0
+FAILED=0
+
+usage() {
+  cat <<'EOF'
+oc — OpenCode container helper
+
+  oc up [--build]            start everything and wait until it is healthy
+  oc down [--volumes --yes]  stop; --volumes also destroys sessions and credentials
+  oc restart                 recreate the containers (keeps volumes and pairing)
+  oc status                  what is running and whether it is healthy
+  oc pair                    print a one-time pairing link for the desktop app
+  oc shell [command…]        a shell inside the container (or run one command)
+  oc logs [-f] [--since W]   the server log
+  oc backup [dir]            archive the oc-data volume
+  oc restore --check FILE    verify an archive
+  oc restore FILE --yes      overwrite the volume from an archive
+  oc audit [window]          what the guardrails blocked (default 24h)
+  oc config                  validate .env and the compose file
+  oc doctor                  check the installation's real state (8 checks)
+  oc version                 versions and paths
+  oc help                    this text
+
+Environment:
+  OC_VERBOSE=1   print every command before running it
+  OC_NO_SUDO=1   never re-run through sudo (fails instead)
+  OC_FLOOR=path  where the host policy floor lives (default /etc/opencode/opencode.json)
+EOF
+}
+
+die() { printf 'oc: %s\n' "$*" >&2; exit 1; }
+
+run() {
+  [ "${OC_VERBOSE:-0}" = 1 ] && printf '+ %s\n' "$*" >&2
+  "$@"
+}
+
+# Docker needs root (or group membership) here; re-run the same command line
+# through sudo rather than asking every subcommand to think about privileges.
+need_docker() {
+  docker info >/dev/null 2>&1 && return 0
+  if [ "${OC_NO_SUDO:-0}" = 1 ]; then
+    printf 'oc: cannot reach the docker daemon. Add this user to the docker group, or run the command without OC_NO_SUDO.\n' >&2
+    exit 1
+  fi
+  printf 'oc: docker needs elevated rights here; re-running through sudo\n' >&2
+  OC_NO_SUDO=1 exec sudo -- "$0" "$cmd" "$@"
+}
+
+load_env() {
+  [ -f .env ] || return 1
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+  return 0
+}
+
+policy_sha() { sha256sum policy/opencode.json | cut -d' ' -f1; }
+
+cmd_up() {
+  build=0
+  for a in "$@"; do
+    case $a in
+      --build) build=1 ;;
+      -*) die "unknown option for up: $a" ;;
+      *) die "up takes no arguments: $a" ;;
+    esac
+  done
+  need_docker "$@"
+  if [ "$build" = 1 ]; then
+    run docker compose build --build-arg "POLICY_SHA=$(policy_sha)" || exit 1
+  fi
+  run docker compose up -d --wait --wait-timeout 90 || exit 1
+  printf '\n  ready: %s\n  desktop app: oc pair\n\n' "$OC_URL"
+}
+
+cmd_down() {
+  volumes=0
+  yes=0
+  for a in "$@"; do
+    case $a in
+      --volumes) volumes=1 ;;
+      --yes) yes=1 ;;
+      -*) die "unknown option for down: $a" ;;
+      *) die "down takes no arguments: $a" ;;
+    esac
+  done
+  if [ "$volumes" = 1 ] && [ "$yes" != 1 ]; then
+    printf 'oc: --volumes destroys sessions, snapshots and the container credentials.\n    Re-run with --yes if that is what you want.\n' >&2
+    exit 1
+  fi
+  need_docker "$@"
+  if [ "$volumes" = 1 ]; then
+    run docker compose down --volumes || exit 1
+  else
+    run docker compose down || exit 1
+  fi
+}
+
+cmd_restart() {
+  # Recreate rather than `restart`: nginx caches the upstream address, and the
+  # healthcheck reads the password once at start.
+  need_docker "$@"
+  run docker compose up -d --force-recreate --wait --wait-timeout 90 || exit 1
+  printf '\n  restarted: %s\n\n' "$OC_URL"
+}
+
+cmd_status() {
+  need_docker "$@"
+  run docker compose ps
+}
+
+cmd_pair() {
+  need_docker "$@"
+  run docker compose exec -T opencode opencode pair --url "$OC_URL"
+}
+
+cmd_shell() {
+  need_docker "$@"
+  if [ "$#" -eq 0 ]; then
+    run docker compose exec opencode bash
+  else
+    run docker compose exec opencode sh -lc "$*"
+  fi
+}
+
+cmd_logs() {
+  follow=""
+  since=""
+  while [ "$#" -gt 0 ]; do
+    case $1 in
+      -f|--follow) follow="-f"; shift ;;
+      --since) [ "$#" -ge 2 ] || die "--since needs a value"; since="--since $2"; shift 2 ;;
+      *) die "unknown option for logs: $1" ;;
+    esac
+  done
+  need_docker "$@"
+  # shellcheck disable=SC2086
+  run docker compose logs $follow $since opencode
+}
+
+cmd_backup() {
+  need_docker "$@"
+  run sh scripts/backup.sh "$@"
+}
+
+cmd_restore() {
+  check=0
+  yes=0
+  archive=""
+  for a in "$@"; do
+    case $a in
+      --check) check=1 ;;
+      --yes) yes=1 ;;
+      -*) die "unknown option for restore: $a" ;;
+      *) archive=$a ;;
+    esac
+  done
+  [ -n "$archive" ] || die "restore needs an archive: oc restore --check FILE"
+  if [ "$check" = 0 ] && [ "$yes" != 1 ]; then
+    printf 'oc: restoring overwrites the oc-data volume (sessions, credentials, snapshots).\n    Re-run with --yes if that is what you want.\n' >&2
+    exit 1
+  fi
+  need_docker "$@"
+  if [ "$check" = 1 ]; then
+    run sh scripts/restore.sh --check "$archive"
+  else
+    run sh scripts/restore.sh "$archive"
+  fi
+}
+
+cmd_audit() {
+  [ "$#" -le 1 ] || die "audit takes at most one window, e.g. oc audit 7d"
+  need_docker "$@"
+  run sh scripts/audit.sh "${1:-24h}"
+}
+
+cmd_config() {
+  load_env || die "no .env here — run ./setup.sh"
+  [ -n "${OPENCODE_PASSWORD:-}" ] || die "OPENCODE_PASSWORD is empty in .env"
+  [ "$OPENCODE_PASSWORD" != change-me ] || die "OPENCODE_PASSWORD is still 'change-me' in .env"
+  [ -n "${HOST_HOME:-}" ] || die "HOST_HOME is missing in .env"
+  [ -n "${PROJECTS_DIR:-}" ] || die "PROJECTS_DIR is missing in .env"
+  case $PROJECTS_DIR in
+    /) die "PROJECTS_DIR must not be / — that mounts the whole host" ;;
+  esac
+  need_docker "$@"
+  run docker compose config -q || exit 1
+  printf 'configuration is valid\n'
+}
+
+pass() { printf 'PASS %s %s\n' "$1" "$2"; PASSED=$((PASSED + 1)); }
+warn() { printf 'WARN %s %s\n' "$1" "$2"; WARNED=$((WARNED + 1)); }
+fail() { printf 'FAIL %s %s\n' "$1" "$2"; FAILED=$((FAILED + 1)); }
+
+cmd_doctor() {
+  need_docker "$@"
+
+  # 1. .env present, private, with a real password
+  if [ ! -f .env ]; then
+    fail 1 "no .env — run ./setup.sh"
+  else
+    mode=$(stat -c %a .env 2>/dev/null || echo "?")
+    if ! load_env; then
+      fail 1 ".env cannot be read"
+    elif [ -z "${OPENCODE_PASSWORD:-}" ] || [ "$OPENCODE_PASSWORD" = change-me ]; then
+      fail 1 "OPENCODE_PASSWORD is empty or still 'change-me'"
+    elif [ "$mode" != 600 ]; then
+      warn 1 ".env mode is $mode, expected 600"
+    else
+      pass 1 ".env is present, private, with a password"
+    fi
+  fi
+
+  # 2. the paths compose needs
+  if [ -z "${HOST_HOME:-}" ]; then
+    fail 2 "HOST_HOME is missing"
+  elif [ -z "${PROJECTS_DIR:-}" ]; then
+    fail 2 "PROJECTS_DIR is missing"
+  elif [ "$PROJECTS_DIR" = / ]; then
+    fail 2 "PROJECTS_DIR is / — that mounts the whole host"
+  elif [ "$PROJECTS_DIR" = "${HOME:-/nonexistent}" ]; then
+    fail 2 "PROJECTS_DIR is \$HOME — use a child directory"
+  elif [ ! -d "$PROJECTS_DIR" ]; then
+    warn 2 "PROJECTS_DIR ($PROJECTS_DIR) does not exist yet"
+  else
+    pass 2 "paths are set and $PROJECTS_DIR exists"
+  fi
+
+  # 3. the compose file parses with this environment
+  if docker compose config -q >/dev/null 2>&1; then
+    pass 3 "compose configuration is valid"
+  else
+    fail 3 "compose configuration is invalid (run: oc config)"
+  fi
+
+  # 4. the image is not older than the files baked into it
+  image=opencode-docker-opencode:local
+  newest=$(git log -1 --format=%ct -- Dockerfile overlay.mjs entrypoint.sh commands policy seccomp bin 2>/dev/null || true)
+  built=$(docker image inspect -f '{{.Created}}' "$image" 2>/dev/null || true)
+  if [ -z "$built" ]; then
+    warn 4 "image $image not built yet (oc up --build)"
+  elif [ -z "$newest" ]; then
+    warn 4 "no git history to compare the image against"
+  else
+    built_epoch=$(date -d "$built" +%s 2>/dev/null || echo 0)
+    if [ "$built_epoch" -lt "$newest" ]; then
+      fail 4 "image is older than the last change to the build inputs (oc up --build)"
+    else
+      pass 4 "image is newer than the build inputs"
+    fi
+  fi
+
+  # 5. the seccomp profile matches its generator
+  if [ ! -f scripts/gen-seccomp.mjs ]; then
+    warn 5 "no generator in this tree; cannot verify the seccomp profile"
+  elif ! command -v node >/dev/null 2>&1; then
+    warn 5 "node is not installed; cannot verify the seccomp profile"
+  elif node scripts/gen-seccomp.mjs --check >/dev/null 2>&1; then
+    pass 5 "seccomp profile matches its generator"
+  else
+    fail 5 "seccomp profile is stale: node scripts/gen-seccomp.mjs"
+  fi
+
+  # 6. the policy baked into the image is the policy in this tree
+  label=$(docker image inspect -f '{{index .Config.Labels "org.opencode-docker.policy-sha"}}' "$image" 2>/dev/null || true)
+  if [ -z "$built" ]; then
+    warn 6 "no image to check (oc up --build)"
+  elif [ -z "$label" ] || [ "$label" = "<no value>" ]; then
+    warn 6 "image predates the policy label (oc up --build)"
+  elif [ "$label" = "$(policy_sha)" ]; then
+    pass 6 "image carries the current policy digest"
+  else
+    fail 6 "image carries a different policy: rebuild with oc up --build"
+  fi
+
+  # 7. the server is healthy and the front door requires a password
+  state=$(docker compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null || true)
+  if ! printf '%s\n' "$state" | grep -q '^opencode healthy'; then
+    fail 7 "the opencode service is not healthy (oc status)"
+  else
+    code4=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -u "opencode:${OPENCODE_PASSWORD:-}" http://127.0.0.1:8080/api/info || true)
+    code6=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -u "opencode:${OPENCODE_PASSWORD:-}" "http://[::1]:8080/api/info" || true)
+    if [ "$code4" != 401 ]; then
+      fail 7 "nginx answered $code4 on 127.0.0.1:8080 (expected 401 until paired)"
+    elif [ "$code6" = 000 ]; then
+      warn 7 "healthy, but [::1]:8080 is unreachable (host without IPv6?)"
+    else
+      pass 7 "service healthy; both loopback addresses answer 401"
+    fi
+  fi
+
+  # 8. the host's root-owned floor agrees with this tree
+  floor=${OC_FLOOR:-/etc/opencode/opencode.json}
+  if [ ! -r "$floor" ]; then
+    warn 8 "no host floor at $floor (the container floor still applies)"
+  else
+    repo_n=$(jq '.policies | length' policy/opencode.json 2>/dev/null || echo "?")
+    host_n=$(jq '.policies | length' "$floor" 2>/dev/null || echo "?")
+    if [ "$repo_n" = "$host_n" ]; then
+      pass 8 "host floor has the same $repo_n policies"
+    else
+      fail 8 "host floor has $host_n policies, this tree has $repo_n: sudo install -m 644 -o root -g root policy/opencode.json $floor"
+    fi
+  fi
+
+  printf '\nsummary: %s passed, %s warned, %s failed\n' "$PASSED" "$WARNED" "$FAILED"
+  [ "$FAILED" -eq 0 ] || exit 1
+}
+
+cmd_version() {
+  printf 'oc %s\n' "$(git describe --tags --always 2>/dev/null || echo unknown)"
+  printf 'repo %s\n' "$REPO"
+  printf 'compose %s\n' "$(docker compose version --short 2>/dev/null || echo unavailable)"
+}
+
+cmd=${1:-help}
+[ "$#" -gt 0 ] && shift || true
+
+case $cmd in
+  help|--help|-h) usage ;;
+  version) cmd_version "$@" ;;
+  up) cmd_up "$@" ;;
+  down) cmd_down "$@" ;;
+  restart) cmd_restart "$@" ;;
+  status) cmd_status "$@" ;;
+  pair) cmd_pair "$@" ;;
+  shell) cmd_shell "$@" ;;
+  logs) cmd_logs "$@" ;;
+  backup) cmd_backup "$@" ;;
+  restore) cmd_restore "$@" ;;
+  audit) cmd_audit "$@" ;;
+  config) cmd_config "$@" ;;
+  doctor) cmd_doctor "$@" ;;
+  *)
+    printf 'unknown command: %s\n\n' "$cmd" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

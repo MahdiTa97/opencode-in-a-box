@@ -138,5 +138,12 @@ case "$nginx_ref" in
   *) bad "19b: nginx image is not digest-pinned: $nginx_ref" ;;
 esac
 
+# 19c. the running image carries the policy this tree defines
+want="$(sha256sum policy/opencode.json | cut -d' ' -f1)"
+got="$(docker image inspect -f '{{index .Config.Labels "org.opencode-docker.policy-sha"}}' opencode-docker-opencode:local 2>/dev/null || true)"
+[ "$got" = "$want" ] \
+  && ok "19c: image carries the current policy digest" \
+  || bad "19c: image policy digest is '${got:-none}', tree has $want (run: oc up --build)"
+
 echo
 [ "$FAIL" -eq 0 ]

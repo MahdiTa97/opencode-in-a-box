@@ -64,8 +64,12 @@ RUN set -eu; \
     chown -R dev:dev /home/dev /work
 
 # The host's hardened policy layer, baked in. The user config cannot loosen it.
+# POLICY_SHA is stamped in by `oc up --build`, so `oc doctor` can tell whether
+# the running image carries the policy this tree defines.
+ARG POLICY_SHA=unknown
 COPY policy/opencode.json /etc/opencode/opencode.json
 RUN chown root:root /etc/opencode/opencode.json && chmod 644 /etc/opencode/opencode.json
+LABEL org.opencode-docker.policy-sha="${POLICY_SHA}"
 
 COPY overlay.mjs /usr/local/lib/opencode-docker/overlay.mjs
 COPY commands/ /usr/local/lib/opencode-docker/commands/

@@ -287,6 +287,56 @@ curl -s -X POST -u "opencode:$(grep '^OPENCODE_PASSWORD=' .env | cut -d= -f2-)" 
   http://opencode.localhost:8080/api/pair | jq -r '.code'
 ```
 
+## `oc` — one command instead of seven
+
+`bin/oc` is a POSIX-sh shortcut for every routine job here. It writes nothing,
+owns no state, and is safe to run from two terminals at once.
+
+```bash
+export PATH="$PWD/bin:$PATH"     # or symlink it into ~/.local/bin
+oc help
+```
+
+| command | runs |
+|---|---|
+| `oc up [--build]` | `compose up -d --wait --wait-timeout 90`; `--build` rebuilds and stamps the policy digest |
+| `oc down [--volumes --yes]` | `compose down`; `--volumes` needs `--yes` because it destroys sessions |
+| `oc restart` | `compose up -d --force-recreate --wait` (recreate, not restart: nginx caches the upstream) |
+| `oc status` | `compose ps` |
+| `oc pair` | mints a one-time pairing link for the desktop app |
+| `oc shell [cmd…]` | a shell inside the container, or one command |
+| `oc logs [-f] [--since W]` | the server log |
+| `oc backup [dir]` | `scripts/backup.sh` |
+| `oc restore --check FILE` / `oc restore FILE --yes` | `scripts/restore.sh` |
+| `oc audit [window]` | `scripts/audit.sh` |
+| `oc config` | validates `.env` and the compose file |
+| `oc doctor` | the eight checks below |
+
+Docker normally needs elevated rights here; any command that needs the daemon
+re-runs itself through `sudo`. Set `OC_NO_SUDO=1` to disable that and fail with
+the reason instead. `OC_VERBOSE=1` prints every command first.
+
+### `oc doctor`
+
+| # | check |
+|---|---|
+| 1 | `.env` exists, is mode 600, and has a real password |
+| 2 | `HOST_HOME`/`PROJECTS_DIR` are set, and the latter is not `/` or `$HOME` |
+| 3 | `docker compose config -q` accepts this environment |
+| 4 | the image is newer than the last change to `Dockerfile`, `overlay.mjs`, `entrypoint.sh`, `commands/`, `policy/`, `seccomp/`, `bin/` |
+| 5 | `seccomp/opencode.json` matches `scripts/gen-seccomp.mjs` |
+| 6 | the image's `org.opencode-docker.policy-sha` label matches `policy/opencode.json` |
+| 7 | `opencode` is healthy and both loopback addresses answer `401` |
+| 8 | `/etc/opencode/opencode.json` has the same policy count as this tree |
+
+`PASS` is good, `WARN` is survivable, `FAIL` exits 1. Checks 4 and 6 are the two
+that caught real problems here: a stale image ran for an hour while every test
+passed, because the tests read the tree and the container ran the old copy.
+
+Never build with `sudo docker compose build` directly — that leaves the policy
+label at `unknown` and `oc doctor` will (correctly) complain. Use
+`oc up --build`.
+
 ## Logs, stop, destroy, upgrade
 
 ```bash
