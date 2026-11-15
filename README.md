@@ -18,6 +18,27 @@ Plan: `docs/superpowers/plans/2026-11-14-opencode-docker.md`
 - An OpenCode config at `~/.config/opencode/opencode.json(c)` is optional;
   without one the container starts with a minimal config.
 
+`./setup.sh` prints a preflight block before it writes anything — compose
+version, kernel seccomp support, how Docker is reachable, IPv6, port 8080, and
+the cgroup generation. It stops early on a kernel without seccomp instead of
+failing ten minutes into a build.
+
+### Platform compatibility
+
+| Host | Status | What to know |
+|---|---|---|
+| Linux x86_64 / arm64, cgroup v2 | Supported, tested | The intended target. |
+| Linux with cgroup v1 | Works | Memory and pids limits still apply; snapshots and OOM behaviour may differ. |
+| Linux without IPv6 | Works after one edit | Drop the `[::1]:8080` publish; `opencode.localhost` resolves to `127.0.0.1`. |
+| SELinux enforcing (Fedora, RHEL) | Untested | Bind mounts need the `:z` suffix, and `no-new-privileges` labels may need adjusting. |
+| No AppArmor (Fedora, Arch, Alpine) | Works | Nothing here depends on AppArmor; the seccomp profile is what confines syscalls. |
+| Kernel without seccomp | Not supported | `setup.sh` refuses to continue; the container profile cannot be applied. |
+| Docker Desktop (macOS, Windows) | Untested | Loopback publishing and UID mapping behave differently; `opencode.localhost` is not special there. |
+| Rootless Docker / Podman | Untested | Volume ownership and port 8080 (<1024 is fine, but subuid mapping is not) need checking. |
+
+Networks that block Docker Hub: the build fails with `403` on `--pull`; see
+*Troubleshooting* for the mirror workaround. Never build with `--pull`.
+
 ## One-time setup
 
 ```bash
@@ -325,6 +346,21 @@ as the container's global config directory: `OPENCODE_CONFIG` only overrides the
 keys it defines, so a global config placed there would leak `browse` and
 credential-less providers into the running server. The overlay is regenerated
 from the host files at every start and served to the server as an extra layer.
+
+## What was blocked
+
+The guardrails deny silently from inside the chat: a blocked command and a
+broken one look the same. This reads them out of the server log.
+
+```bash
+./scripts/audit.sh          # last 24h
+./scripts/audit.sh 7d       # any docker log window
+```
+
+It counts three kinds of denial — agent rules, the `/etc` policy layer, and
+tool-level (`shell`, `read`, `edit`) — and prints the last eight entries. A
+quiet week prints `nothing was blocked`, which is the honest answer, not a
+guarantee that nothing tried.
 
 ## Kernel and filesystem hardening
 

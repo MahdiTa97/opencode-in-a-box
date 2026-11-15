@@ -13,6 +13,44 @@ docker compose version >/dev/null 2>&1 || {
   exit 1
 }
 
+# Say what this machine can and cannot do before a ten-minute build finds out.
+preflight() { printf '  %-22s %s\n' "$1" "$2"; }
+echo "preflight:"
+preflight "compose" "$(docker compose version --short 2>/dev/null || echo unknown)"
+
+if [ -r /proc/self/status ] && grep -q '^Seccomp:' /proc/self/status; then
+  preflight "seccomp" "available (the container profile needs it)"
+else
+  echo "  seccomp                MISSING — the container will not start; this kernel is too old" >&2
+  exit 1
+fi
+
+if docker info >/dev/null 2>&1; then
+  preflight "docker daemon" "reachable without sudo"
+elif command -v sudo >/dev/null 2>&1; then
+  preflight "docker daemon" "needs sudo (use: sudo docker compose ...)"
+else
+  preflight "docker daemon" "not reachable — add this user to the docker group first"
+fi
+
+if [ -f /proc/net/if_inet6 ] || [ -s /proc/net/if_inet6 ]; then
+  preflight "ipv6" "present (http://opencode.localhost resolves to ::1)"
+else
+  preflight "ipv6" "absent — remove the [::1]:8080 publish from docker-compose.yml"
+fi
+
+if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -qE ':8080[[:space:]]'; then
+  preflight "port 8080" "in use (fine if it is this project's nginx)"
+else
+  preflight "port 8080" "free"
+fi
+
+if [ "$(stat -fc %T /sys/fs/cgroup 2>/dev/null || echo unknown)" = "cgroup2fs" ]; then
+  preflight "cgroups" "v2"
+else
+  preflight "cgroups" "v1 or unknown (limits still work, snapshots may differ)"
+fi
+
 mkdir -p "$HOME/.config/opencode"
 
 if [ ! -f .env ]; then
@@ -67,3 +105,5 @@ echo "next:"
 echo "  sudo docker compose build"
 echo "  sudo docker compose up -d --force-recreate"
 echo "  sudo docker compose exec opencode opencode pair --url http://opencode.localhost:8080"
+echo ""
+echo "afterwards: ./scripts/audit.sh   (what the guardrails blocked)"
