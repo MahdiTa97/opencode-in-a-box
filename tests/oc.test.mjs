@@ -22,8 +22,9 @@ case "$name" in
       fi
       exit "\${SHIM_DOCKER_INFO_EXIT:-0}"
     fi
-    if [ "\${1:-}" = compose ] && [ "\${2:-}" = ps ] && [ -n "\${SHIM_PS_OUT:-}" ]; then
-      printf '%s\\n' "\$SHIM_PS_OUT"
+    if [ "\${1:-}" = compose ] && [ "\${2:-}" = ps ]; then
+      [ -n "\${SHIM_PS_OUT:-}" ] && printf '%s\\n' "\$SHIM_PS_OUT"
+      exit "\${SHIM_PS_EXIT:-0}"
     fi
     ;;
   sudo)
@@ -343,13 +344,13 @@ test("doctor fails check 7 when only one loopback address answers 401", () => {
 test("the sudo re-exec keeps the command and its arguments", () => {
   const repo = makeRepo();
   const marker = path.join(mkdtempSync(path.join(tmpdir(), "oc-root-")), "daemon-ok");
-  const r = oc(["logs", "-f", "--since", "2h"], {
+  const r = oc(["logs", "-f", "--since", "2 hours"], {
     repo,
     env: { SHIM_DOCKER_INFO_FAIL_UNLESS: marker, SHIM_SUDO_EXEC: "1" },
   });
   assert.equal(r.code, 0, r.stderr);
   assert.ok(r.calls.includes("CALL sudo\n"), r.calls);
-  assert.ok(hasCall(r.calls, "docker", "compose", "logs", "-f", "--since", "2h", "opencode"), r.calls);
+  assert.match(r.calls, /A --since\nA 2 hours\nA opencode\n/, r.calls);
 });
 
 test("a symlinked oc still finds the repo", () => {
@@ -432,8 +433,14 @@ test("a piped command emits no escape sequences", () => {
   assert.doesNotMatch(r.stdout, /\u001b\[/);
 });
 
-test("OC_ASCII uses plain icons even on a UTF-8 terminal", () => {
-  const r = oc(["doctor"], { env: { OC_ASCII: "1", OC_NO_SUDO: "1" } });
+test("a pipe carries no icons, in any locale", () => {
+  const r = oc(["doctor"], { env: { OC_NO_SUDO: "1", LANG: "C.UTF-8", LC_ALL: "", LC_CTYPE: "" } });
+  assert.doesNotMatch(r.stdout, /[✓✗]/);
+  assert.match(r.stdout, /^(PASS|WARN|FAIL) [0-9] /m);
+});
+
+test("OC_ASCII keeps plain labels on a UTF-8 terminal", () => {
+  const r = oc(["doctor"], { env: { OC_ASCII: "1", OC_NO_SUDO: "1", LANG: "C.UTF-8" } });
   assert.doesNotMatch(r.stdout, /[✓✗]/);
   assert.match(r.stdout, /^(PASS|WARN|FAIL) [0-9] /m);
 });
@@ -482,15 +489,64 @@ test("a missing .env names the fix", () => {
   assert.doesNotMatch(r.calls, /CALL docker/);
 });
 
-test("doctor --json is machine readable", () => {
+test("doctor --json is one object per line and parses", () => {
   const r = oc(["doctor", "--json"], { env: { OC_NO_SUDO: "1" } });
+  for (const line of r.stdout.trim().split("\n")) JSON.parse(line);
+});
+
+test("doctor --json reports a healthy installation with exit 0", () => {
+  const repo = makeRepo();
+  const r = oc(["doctor", "--json"], {
+    repo,
+    env: {
+      SHIM_PS_OUT: "opencode healthy",
+      SHIM_CURL_OUT: "401",
+      OC_FLOOR: "/nonexistent/floor.json",
+    },
+  });
+  assert.equal(r.code, 0, r.stdout);
   const parsed = JSON.parse(r.stdout);
   assert.equal(parsed.checks.length, 8);
-  assert.ok(parsed.passed + parsed.warned + parsed.failed === 8);
+  assert.equal(parsed.failed, 0);
+  assert.ok(parsed.passed + parsed.warned === 8);
   for (const c of parsed.checks) {
     assert.ok(["1", "2", "3", "4", "5", "6", "7", "8"].includes(String(c.id)), c.id);
     assert.ok(["pass", "warn", "fail"].includes(c.status), c.status);
+    if (c.status !== "pass") assert.ok(c.fix.length > 0, `check ${c.id} has no fix`);
   }
+});
+
+test("status --json survives the sudo re-exec", () => {
+  const repo = makeRepo();
+  const marker = path.join(mkdtempSync(path.join(tmpdir(), "oc-json-")), "daemon-ok");
+  const r = oc(["status", "--json"], {
+    repo,
+    env: {
+      SHIM_DOCKER_INFO_FAIL_UNLESS: marker,
+      SHIM_SUDO_EXEC: "1",
+      SHIM_PS_OUT: "opencode\trunning\thealthy",
+    },
+  });
+  assert.equal(r.code, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout);
+  assert.equal(parsed.service, "opencode");
+  assert.equal(parsed.health, "healthy");
+});
+
+test("status --json rejects a second argument instead of hiding it", () => {
+  const r = oc(["status", "--json", "typo"]);
+  assert.equal(r.code, 2);
+  assert.doesNotMatch(r.calls, /CALL docker/);
+});
+
+test("status --json reports a failing compose as an error", () => {
+  const repo = makeRepo();
+  const r = oc(["status", "--json"], {
+    repo,
+    env: { SHIM_PS_EXIT: "1", SHIM_DOCKER_INFO_EXIT: "0" },
+  });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /docker compose ps failed/);
 });
 
 test("doctor carries a fix line on a failing check", () => {

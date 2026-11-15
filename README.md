@@ -344,12 +344,15 @@ Every command has its own page, and `oc <cmd> --help` is the same text, so
 there is exactly one place where help lives. A misspelled command gets a
 suggestion (`oc stauts` → `did you mean: status?`) instead of a wall of output.
 
-Colour is used only when stdout is a terminal, `TERM` is not `dumb`, and
-`NO_COLOR` is unset or empty — the convention from
-[no-color.org](https://no-color.org), so piping or redirecting already gives
-plain text. `OC_ASCII=1` drops the `✓ ! ✗` icons and prints the words instead,
-for terminals or fonts that render them badly; the words are present in every
-mode, so `oc doctor | grep FAIL` always works.
+Colour is used only when the stream it is written to is a terminal (`stdout`
+for results, `stderr` for errors), `TERM` is not `dumb`, and `NO_COLOR` is
+unset or empty — the convention from [no-color.org](https://no-color.org), so
+piping or redirecting already gives plain text. Icons follow the same rule:
+`✓ ! ✗` appear only on a terminal, so a pipe or a log file contains nothing but
+ASCII. `OC_ASCII=1` also drops them on a terminal, for fonts that render them
+badly. The words `PASS`/`WARN`/`FAIL` are present in every mode, so
+`oc doctor | grep FAIL` always works, and `--json` output is plain on both
+streams.
 
 Exit codes: `0` success, `1` the environment or a check is wrong, `2` usage
 error (unknown command, unknown flag, a flag missing its value). Usage errors
