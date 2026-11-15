@@ -26,14 +26,29 @@ cd ~/opencode-docker
 ./setup.sh
 ```
 
-`setup.sh` creates `~/projects` and `~/.config/opencode` if missing, writes a
-`.env` with a random password, your `HOST_UID`/`HOST_GID`, and `HOST_HOME=$HOME`,
-then prints the next commands. It is safe to re-run: it only adds what is
-missing and never overwrites an existing value.
+`setup.sh` creates `$HOME/projects` and `~/.config/opencode` if missing, writes a
+`.env` with a random password, your `HOST_UID`/`HOST_GID`, `HOST_HOME=$HOME` and
+`PROJECTS_DIR=$HOME/projects`, then prints the next commands. It is safe to
+re-run: it only adds what is missing and never overwrites an existing value.
 
 `HOST_HOME` is required rather than defaulted, because `sudo docker` sets
 `HOME=/root` and a wrong value makes Docker create empty directories over your
 config files.
+
+### Where your code lives
+
+`PROJECTS_DIR` is the one host tree mounted read-write into the container, at
+`/work`. It must be an **absolute** path; `setup.sh` refuses `/` and `$HOME`
+itself and creates the directory if it is missing.
+
+```bash
+# .env
+PROJECTS_DIR=/home/you/code
+```
+
+Everything under it is readable and writable by the agent, so point it at a
+parent directory of your projects, not at anything wider. Projects living
+outside it are simply not visible inside the container.
 
 The Docker socket is root-only on this host, so every command is `sudo docker`.
 Optional alias:
@@ -79,7 +94,7 @@ The base image ships corepack shims at `/usr/local/bin/{yarn,yarnpkg,pnpm,pnpx}`
 The Dockerfile removes them before installing the pinned versions; without that,
 `npm install -g yarn` fails with `EEXIST: file already exists`.
 
-`node_modules` built on the host inside `~/projects` are visible in the
+`node_modules` built on the host inside `PROJECTS_DIR` are visible in the
 container, but native addons are **not** interchangeable if the host runs a
 different Node major. If something fails with `NODE_MODULE_VERSION`, run
 `pnpm rebuild` (or delete `node_modules`) inside the container.

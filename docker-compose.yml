@@ -47,7 +47,8 @@ services:
       # Credentials: the OpenCode console account lives in the oc-data volume.
       # No gateway key files are mounted, so the overlay drops those providers.
       # Projects, read-write. Edit this line to mount a different root.
-      - ${HOST_HOME:?HOST_HOME is not set - run ./setup.sh}/projects:/work
+      # PROJECTS_DIR is the only host tree the container can read and write.
+      - ${PROJECTS_DIR:?PROJECTS_DIR is not set - run ./setup.sh}:/work
       - oc-data:/home/dev/.local/share/opencode
       - oc-cache:/home/dev/.cache/opencode
     restart: unless-stopped

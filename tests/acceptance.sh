@@ -75,6 +75,16 @@ read_uid="$(tr -d '\r' < /tmp/.acc-uid)"
 [ "$read_uid" = "$HOST_UID:$HOST_GID" ] && ok "11: /work file owned $read_uid" || bad "11: /work file owned '$read_uid'"
 docker compose exec -T opencode rm -f /work/.acceptance-uid >/dev/null 2>&1
 
+# 11b. /work is exactly PROJECTS_DIR — not some other host tree
+want_work="$(sed -n 's/^PROJECTS_DIR=//p' .env | tail -1)"
+got_work="$(docker inspect "$(docker compose ps -q opencode)" \
+  --format '{{range .Mounts}}{{if eq .Destination "/work"}}{{.Source}}{{end}}{{end}}' 2>/dev/null | tr -d '\r')"
+if [ -n "$want_work" ] && [ "$want_work" = "$got_work" ]; then
+  ok "11b: /work is $got_work"
+else
+  bad "11b: /work is '$got_work', expected PROJECTS_DIR='$want_work'"
+fi
+
 # 12. a usable provider credential is stored in the container
 # `auth list --format json` is an array of {id,name,connections:[...]};
 # a stored credential is one entry inside a `connections` array.
