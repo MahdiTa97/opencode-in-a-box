@@ -100,10 +100,12 @@ case "$tc" in
 esac
 
 # 17. the kernel refuses escape primitives (seccomp profile applied)
-seccomp_state="$(docker compose exec -T opencode sh -c 'grep "^Seccomp:" /proc/self/status' 2>/dev/null | tr -d '\r')"
-case "$seccomp_state" in
-  "Seccomp: 2"|"Seccomp: 2 (filter)") ok "17a: $seccomp_state" ;;
-  *) bad "17a: '$seccomp_state' (want Seccomp: 2)" ;;
+# /proc/self/status separates the field with a tab, so compare the values only.
+seccomp_mode="$(docker compose exec -T opencode sh -c 'grep "^Seccomp:" /proc/self/status' 2>/dev/null | tr -d '\r' | awk '{print $2}')"
+case "$seccomp_mode" in
+  2) ok "17a: seccomp filter is active (mode 2)" ;;
+  "") bad "17a: could not read the seccomp mode" ;;
+  *) bad "17a: seccomp mode is $seccomp_mode (want 2)" ;;
 esac
 probe="$(docker compose exec -T opencode python3 -c \
   'import ctypes; l=ctypes.CDLL(None, use_errno=True); r=l.ptrace(0,0,0,0); print(r, ctypes.get_errno())' \
