@@ -16,39 +16,105 @@ OC_URL=http://opencode.localhost:8080
 PASSED=0
 WARNED=0
 FAILED=0
+JSON=0
+JSON_ROWS=""
+IMAGE=opencode-docker-opencode:local
 
-usage() {
-  cat <<'EOF'
-oc — OpenCode container helper
+COMMANDS="up down restart status pair shell logs backup restore audit config doctor version help"
 
-  oc up [--build]            start everything and wait until it is healthy
-  oc down [--volumes --yes]  stop; --volumes also destroys sessions and credentials
-  oc restart                 recreate the containers (keeps volumes and pairing)
-  oc status                  what is running and whether it is healthy
-  oc pair                    print a one-time pairing link for the desktop app
-  oc shell [command…]        a shell inside the container (or run one command)
-  oc logs [-f] [--since W]   the server log
-  oc backup [dir]            archive the oc-data volume
-  oc restore --check FILE    verify an archive
-  oc restore FILE --yes      overwrite the volume from an archive
-  oc audit [window]          what the guardrails blocked (default 24h)
-  oc config                  validate .env and the compose file
-  oc doctor                  check the installation's real state (8 checks)
-  oc version                 versions and paths
-  oc help                    this text
-
-Environment:
-  OC_VERBOSE=1   print every command before running it
-  OC_NO_SUDO=1   never re-run through sudo (fails instead)
-  OC_FLOOR=path  where the host policy floor lives (default /etc/opencode/opencode.json)
-EOF
+# --- output ----------------------------------------------------------------
+# Colour is a property of the destination, not of the program: a pipe, a log
+# file, or NO_COLOR (no-color.org) always wins, so nothing downstream ever sees
+# an escape byte it did not ask for.
+is_color() {
+  [ -z "${NO_COLOR:-}" ] || return 1
+  [ "${TERM:-}" != dumb ] || return 1
+  [ -t 1 ] || return 1
+  return 0
 }
 
-die() { printf 'oc: %s\n' "$*" >&2; exit 1; }
+is_utf8() {
+  case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in
+    *UTF-8* | *utf-8* | *UTF8* | *utf8*) return 0 ;;
+  esac
+  return 1
+}
 
-# Commands with no options would otherwise ignore a typo silently.
-no_args() {
-  [ "$#" -eq 0 ] || die "$cmd takes no arguments (got: $1)"
+C_GREEN=""
+C_YELLOW=""
+C_RED=""
+C_DIM=""
+C_BOLD=""
+C_RESET=""
+if is_color; then
+  C_GREEN=$(printf '\033[32m')
+  C_YELLOW=$(printf '\033[33m')
+  C_RED=$(printf '\033[31m')
+  C_DIM=$(printf '\033[2m')
+  C_BOLD=$(printf '\033[1m')
+  C_RESET=$(printf '\033[0m')
+fi
+
+# The verdict word stays in every mode, so `grep FAIL` works in a pipe and in
+# an ascii terminal; the icon is decoration on top of it.
+if is_utf8 && [ "${OC_ASCII:-0}" != 1 ]; then
+  LABEL_PASS='✓ PASS'
+  LABEL_WARN='! WARN'
+  LABEL_FAIL='✗ FAIL'
+else
+  LABEL_PASS='PASS'
+  LABEL_WARN='WARN'
+  LABEL_FAIL='FAIL'
+fi
+
+pass() {
+  PASSED=$((PASSED + 1))
+  if [ "$JSON" = 1 ]; then
+    json_row "$1" pass "$2" "${3:-}"
+  else
+    printf '%s%s%s %s %s\n' "$C_GREEN" "$LABEL_PASS" "$C_RESET" "$1" "$2"
+    [ -z "${3:-}" ] || printf '        %sfix: %s%s\n' "$C_DIM" "$3" "$C_RESET"
+  fi
+}
+
+warn() {
+  WARNED=$((WARNED + 1))
+  if [ "$JSON" = 1 ]; then
+    json_row "$1" warn "$2" "${3:-}"
+  else
+    printf '%s%s%s %s %s\n' "$C_YELLOW" "$LABEL_WARN" "$C_RESET" "$1" "$2"
+    [ -z "${3:-}" ] || printf '        %sfix: %s%s\n' "$C_DIM" "$3" "$C_RESET"
+  fi
+}
+
+fail() {
+  FAILED=$((FAILED + 1))
+  if [ "$JSON" = 1 ]; then
+    json_row "$1" fail "$2" "${3:-}"
+  else
+    printf '%s%s%s %s %s\n' "$C_RED" "$LABEL_FAIL" "$C_RESET" "$1" "$2"
+    [ -z "${3:-}" ] || printf '        %sfix: %s%s\n' "$C_DIM" "$3" "$C_RESET"
+  fi
+}
+
+# One tab-separated record per check; jq assembles the document at the end so
+# no JSON is ever hand-quoted here.
+json_row() {
+  JSON_ROWS="${JSON_ROWS}$1	$2	$3	${4:-}
+"
+}
+
+err() {
+  printf '%soc:%s %s\n' "$C_RED" "$C_RESET" "$1" >&2
+  [ -z "${2:-}" ] || printf '     %shint:%s %s\n' "$C_DIM" "$C_RESET" "$2" >&2
+  [ -z "${3:-}" ] || printf '     %sfix:%s %s\n' "$C_DIM" "$C_RESET" "$3" >&2
+  exit 1
+}
+
+usage_err() {
+  printf '%soc:%s %s\n' "$C_RED" "$C_RESET" "$2" >&2
+  printf '     %shint:%s oc help %s\n' "$C_DIM" "$C_RESET" "$1" >&2
+  exit 2
 }
 
 run() {
@@ -56,93 +122,442 @@ run() {
   "$@"
 }
 
+# --- help ------------------------------------------------------------------
+usage() {
+  printf '%soc%s — OpenCode container helper\n\n' "$C_BOLD" "$C_RESET"
+  printf '  oc up [--build]            start everything and wait until healthy\n'
+  printf '  oc down [--volumes --yes]  stop; --volumes destroys sessions and credentials\n'
+  printf '  oc restart                 recreate the containers (keeps volumes)\n'
+  printf '  oc status [--json]         what is running and whether it is healthy\n'
+  printf '  oc pair                    one-time pairing link for the desktop app\n'
+  printf '  oc shell [command…]        a shell inside the container\n'
+  printf '  oc logs [-f] [--since W]   the server log\n'
+  printf '  oc backup [dir]            archive the volumes\n'
+  printf '  oc restore --check FILE    verify an archive\n'
+  printf '  oc restore FILE --yes      overwrite the volume from an archive\n'
+  printf '  oc audit [window]          what the guardrails blocked (default 24h)\n'
+  printf '  oc config                  validate .env and the compose file\n'
+  printf '  oc doctor [--json]         check what the installation really is\n'
+  printf '  oc version                 versions and paths\n'
+  printf '  oc help [command]          this text, or one command in detail\n\n'
+  printf '%sEnvironment%s\n' "$C_BOLD" "$C_RESET"
+  printf '  OC_VERBOSE=1   print every command before running it\n'
+  printf '  OC_NO_SUDO=1   never re-run through sudo (fail instead)\n'
+  printf '  OC_FLOOR=path  where the host policy floor lives\n'
+  printf '  OC_ASCII=1     no icons, plain PASS/WARN/FAIL in any terminal\n'
+  printf '  NO_COLOR=1     plain text, no escapes\n'
+}
+
+help_up() {
+  cat <<'EOF'
+up — start everything and wait until it is healthy
+
+usage: oc up [--build]
+
+  --build   rebuild the image first, stamping the policy digest
+
+Writes no files. Safe to run twice, and from two terminals at once.
+
+examples:
+  oc up                 start, or leave a healthy stack alone
+  oc up --build         after changing Dockerfile, policy/ or seccomp/
+
+touches: containers and networks only. Volumes, sessions and credentials stay.
+EOF
+}
+
+help_down() {
+  cat <<'EOF'
+down — stop the containers
+
+usage: oc down [--volumes --yes]
+
+  --volumes   also delete the oc-data, oc-cache and oc-state volumes
+  --yes       required together with --volumes
+
+examples:
+  oc down                       stop, keep everything
+  oc down --volumes --yes       stop and forget sessions and credentials
+
+touches: --volumes destroys sessions, snapshots and the container's login.
+EOF
+}
+
+help_restart() {
+  cat <<'EOF'
+restart — recreate the containers
+
+usage: oc restart
+
+Recreates rather than restarts: nginx caches the upstream address and the
+healthcheck reads the password at start, so a plain restart can leave the
+front door pointing at a dead address.
+
+examples:
+  oc restart            after editing .env or docker-compose.yml
+  oc status             confirm it came back healthy
+
+touches: containers. Volumes, sessions and pairing survive.
+EOF
+}
+
+help_status() {
+  cat <<'EOF'
+status — what is running and whether it is healthy
+
+usage: oc status [--json]
+
+  --json   one JSON object per service per line
+
+examples:
+  oc status
+  oc status --json | jq -r 'select(.health != "healthy")'
+
+touches: nothing.
+EOF
+}
+
+help_pair() {
+  cat <<'EOF'
+pair — one-time pairing link for the desktop app
+
+usage: oc pair
+
+Prints a link valid for five minutes. Open it in the browser, or paste it into
+the desktop app's server address field, on the same machine.
+
+examples:
+  oc pair
+  oc pair | xargs -r xdg-open
+
+touches: nothing. The link is single use.
+EOF
+}
+
+help_shell() {
+  cat <<'EOF'
+shell — a shell inside the container
+
+usage: oc shell [command…]
+
+Without arguments: an interactive bash inside the container. With arguments:
+one command, run through sh -lc.
+
+examples:
+  oc shell
+  oc shell 'ls /work && node --version'
+
+touches: whatever your command touches. The container sees /work read-write.
+EOF
+}
+
+help_logs() {
+  cat <<'EOF'
+logs — the server log
+
+usage: oc logs [-f] [--since WINDOW]
+
+  -f, --follow     keep streaming
+  --since WINDOW   docker's window syntax: 10m, 2h, 2026-11-15T10:00:00
+
+examples:
+  oc logs
+  oc logs -f --since 30m
+
+touches: nothing.
+EOF
+}
+
+help_backup() {
+  cat <<'EOF'
+backup — archive the volumes
+
+usage: oc backup [dir]
+
+  dir   destination directory, default ./backups
+
+The archive is written by the service user, so it stays owned by you. Names
+carry a timestamp, so two runs never collide.
+
+examples:
+  oc backup
+  oc restore --check backups/oc-data-20261115-101500.tar.gz
+
+touches: writes one file. Nothing is stopped.
+EOF
+}
+
+help_restore() {
+  cat <<'EOF'
+restore — verify or replace the volume contents
+
+usage: oc restore --check FILE
+       oc restore FILE --yes
+
+  --check   only prove the archive is readable; changes nothing
+  --yes     required for a real restore, which overwrites the volume
+
+examples:
+  oc restore --check backups/oc-data-20261115-101500.tar.gz
+  oc restore backups/oc-data-20261115-101500.tar.gz --yes
+
+touches: a real restore replaces sessions, credentials and snapshots, and
+recreates the containers.
+EOF
+}
+
+help_audit() {
+  cat <<'EOF'
+audit — what the guardrails blocked
+
+usage: oc audit [window]
+
+  window   docker's --since syntax, default 24h
+
+Counts policy rejections, permission denials and Docker-level denials in the
+container log.
+
+examples:
+  oc audit
+  oc audit 7d
+
+touches: nothing. Read-only.
+EOF
+}
+
+help_config() {
+  cat <<'EOF'
+config — validate .env and the compose file
+
+usage: oc config
+
+Checks .env against the same rules setup.sh enforces, then parses the compose
+file with this environment. Changes nothing.
+
+examples:
+  oc config
+  ./setup.sh && oc config
+
+touches: nothing.
+EOF
+}
+
+help_doctor() {
+  cat <<'EOF'
+doctor — check the installation's real state
+
+usage: oc doctor [--json]
+
+  --json   one JSON document: counts plus eight checks
+
+Eight read-only checks, exit 1 if any FAILs:
+  1 .env present, private, real password     5 seccomp profile matches generator
+  2 paths set and project root exists        6 image carries the policy digest
+  3 compose configuration parses             7 service healthy, front door 401
+  4 image newer than the build inputs        8 host floor matches this tree
+
+examples:
+  oc doctor
+  oc doctor --json | jq '.checks[] | select(.status != "pass")'
+
+touches: nothing.
+EOF
+}
+
+help_version() {
+  cat <<'EOF'
+version — versions and paths
+
+usage: oc version
+
+Prints the oc version, the repo it resolved, and the compose version.
+
+examples:
+  oc version
+  oc version | grep repo
+
+touches: nothing.
+EOF
+}
+
+help_help() {
+  cat <<'EOF'
+help — the command list, or one command in detail
+
+usage: oc help [command]
+
+examples:
+  oc help
+  oc help doctor
+EOF
+}
+
+cmd_help() {
+  case ${1:-} in
+    '') usage ;;
+    *) cmd_help_one "$1" ;;
+  esac
+}
+
+cmd_help_one() {
+  case " $COMMANDS " in
+    *" $1 "*) "help_$1" ;;
+    *) usage_err help "unknown command: $1$(suggest "$1")" ;;
+  esac
+}
+
+# --- arguments -------------------------------------------------------------
+# A near-miss is worth a suggestion: `oc docotr` should not dump the table.
+suggest() {
+  awk -v w="$1" -v list="$COMMANDS" '
+    function dist(a, b,   la, lb, i, j, prev, cur, tmp) {
+      la = length(a); lb = length(b)
+      if (la == 0) return lb
+      if (lb == 0) return la
+      for (j = 0; j <= lb; j++) prev[j] = j
+      for (i = 1; i <= la; i++) {
+        cur[0] = i
+        for (j = 1; j <= lb; j++) {
+          cost = (substr(a, i, 1) == substr(b, j, 1)) ? 0 : 1
+          cur[j] = prev[j] + 1
+          if (cur[j - 1] + 1 < cur[j]) cur[j] = cur[j - 1] + 1
+          if (prev[j - 1] + cost < cur[j]) cur[j] = prev[j - 1] + cost
+        }
+        for (j = 0; j <= lb; j++) prev[j] = cur[j]
+      }
+      return prev[lb]
+    }
+    BEGIN {
+      n = split(list, a, " "); best = ""; bd = 99
+      for (i = 1; i <= n; i++) { d = dist(w, a[i]); if (d < bd) { bd = d; best = a[i] } }
+      if (bd <= 2 && best != "") printf " — did you mean: %s?", best
+    }'
+}
+
+# Commands with no options would otherwise ignore a typo silently.
+no_args() {
+  [ "$#" -eq 0 ] || usage_err "$cmd" "$cmd takes no arguments (got: $1)"
+}
+
+# Same rules as setup.sh: one source of truth, never re-implemented here.
+check_env() {
+  code=0
+  out=$(sh scripts/check-env.sh all 2>&1) || code=$?
+  [ "$code" -eq 0 ] && return 0
+  case $code in
+    2) printf '%soc:%s warning: %s\n' "$C_YELLOW" "$C_RESET" "$out" >&2 ;;
+    *) err "$out" "run ./setup.sh" "./setup.sh" ;;
+  esac
+  return 0
+}
+
+# --- docker ----------------------------------------------------------------
 # Docker needs root (or group membership) here; re-run the same command line
 # through sudo rather than asking every subcommand to think about privileges.
+# Always called after the arguments are validated, so a typo never costs a
+# password prompt.
 need_docker() {
   docker info >/dev/null 2>&1 && return 0
   if [ "${OC_NO_SUDO:-0}" = 1 ]; then
-    printf 'oc: cannot reach the docker daemon. Add this user to the docker group, or run the command without OC_NO_SUDO.\n' >&2
-    exit 1
+    err "cannot reach the docker daemon" \
+      "add this user to the docker group, or run without OC_NO_SUDO" \
+      "sudo systemctl start docker"
   fi
-  printf 'oc: docker needs elevated rights here; re-running through sudo\n' >&2
+  printf '%soc:%s docker needs elevated rights here; re-running through sudo\n' "$C_DIM" "$C_RESET" >&2
   # sudo's env_reset would drop these, so pass them explicitly: without
   # OC_NO_SUDO the child recurses forever if the daemon is still unreachable.
   exec sudo -- env \
     OC_NO_SUDO=1 \
     "OC_VERBOSE=${OC_VERBOSE:-0}" \
     "OC_FLOOR=${OC_FLOOR:-}" \
+    "OC_ASCII=${OC_ASCII:-0}" \
     "$SELF" "$cmd" "$@"
 }
 
 policy_sha() {
-  [ -f policy/opencode.json ] || die "policy/opencode.json is missing"
+  [ -f policy/opencode.json ] || err "policy/opencode.json is missing" "restore it from git" "git checkout -- policy/opencode.json"
   sha=$(sha256sum policy/opencode.json | cut -d' ' -f1)
-  [ -n "$sha" ] || die "cannot compute the policy digest (sha256sum missing?)"
+  [ -n "$sha" ] || err "cannot compute the policy digest" "sha256sum is missing from PATH"
   printf '%s\n' "$sha"
 }
 
+# --- commands --------------------------------------------------------------
 cmd_up() {
+  case ${1:-} in -h | --help) help_up; return 0 ;; esac
   build=0
   for a in "$@"; do
     case $a in
       --build) build=1 ;;
-      -*) die "unknown option for up: $a" ;;
-      *) die "up takes no arguments: $a" ;;
+      -*) usage_err up "unknown option for up: $a" ;;
+      *) usage_err up "up takes no arguments: $a" ;;
     esac
   done
+  check_env
   need_docker "$@"
   if [ "$build" = 1 ]; then
-    run docker compose build --build-arg "POLICY_SHA=$(policy_sha)" || exit 1
+    run docker compose build --build-arg "POLICY_SHA=$(policy_sha)" || err "the build failed" "see Troubleshooting for the registry 403 workaround" "sed -n '/Docker Hub/,/^## /p' README.md"
   fi
-  run docker compose up -d --wait --wait-timeout 90 || exit 1
-  printf '\n  ready: %s\n  desktop app: oc pair\n\n' "$OC_URL"
+  run docker compose up -d --wait --wait-timeout 90 || err "the stack did not become healthy" "oc logs --tail 50" "oc status"
+  printf '\n  %sready%s: %s\n  desktop app: oc pair\n\n' "$C_BOLD" "$C_RESET" "$OC_URL"
 }
 
 cmd_down() {
+  case ${1:-} in -h | --help) help_down; return 0 ;; esac
   volumes=0
   yes=0
   for a in "$@"; do
     case $a in
       --volumes) volumes=1 ;;
       --yes) yes=1 ;;
-      -*) die "unknown option for down: $a" ;;
-      *) die "down takes no arguments: $a" ;;
+      -*) usage_err down "unknown option for down: $a" ;;
+      *) usage_err down "down takes no arguments: $a" ;;
     esac
   done
   if [ "$volumes" = 1 ] && [ "$yes" != 1 ]; then
-    printf 'oc: --volumes destroys sessions, snapshots and the container credentials.\n    Re-run with --yes if that is what you want.\n' >&2
-    exit 1
+    err "--volumes destroys sessions, snapshots and the container credentials" \
+      "re-run with --yes if that is what you want"
   fi
   need_docker "$@"
   if [ "$volumes" = 1 ]; then
-    run docker compose down --volumes || exit 1
+    run docker compose down --volumes
   else
-    run docker compose down || exit 1
+    run docker compose down
   fi
 }
 
 cmd_restart() {
+  case ${1:-} in -h | --help) help_restart; return 0 ;; esac
   no_args "$@"
-  # Recreate rather than `restart`: nginx caches the upstream address, and the
-  # healthcheck reads the password once at start.
   need_docker "$@"
-  run docker compose up -d --force-recreate --wait --wait-timeout 90 || exit 1
-  printf '\n  restarted: %s\n\n' "$OC_URL"
+  run docker compose up -d --force-recreate --wait --wait-timeout 90 || err "the stack did not become healthy" "oc logs --since 5m" "oc status"
+  printf '\n  %srestarted%s: %s\n\n' "$C_BOLD" "$C_RESET" "$OC_URL"
 }
 
 cmd_status() {
-  no_args "$@"
+  case ${1:-} in
+    -h | --help) help_status; return 0 ;;
+    --json) JSON=1 ;;
+    '') ;;
+    *) no_args "$@" ;;
+  esac
   need_docker
+  if [ "$JSON" = 1 ]; then
+    docker compose ps --format '{{.Service}}	{{.State}}	{{.Health}}' |
+      jq -Rc 'select(length > 0) | split("\t") | {service: .[0], state: .[1], health: (.[2] // "")}'
+    return 0
+  fi
   run docker compose ps
 }
 
 cmd_pair() {
+  case ${1:-} in -h | --help) help_pair; return 0 ;; esac
   no_args "$@"
   need_docker
   run docker compose exec -T opencode opencode pair --url "$OC_URL"
 }
 
 cmd_shell() {
+  case ${1:-} in -h | --help) help_shell; return 0 ;; esac
   need_docker "$@"
   if [ "$#" -eq 0 ]; then
     run docker compose exec opencode bash
@@ -152,17 +567,25 @@ cmd_shell() {
 }
 
 cmd_logs() {
-  # Before the parse loop: the re-exec must carry -f/--since, not the leftovers.
-  need_docker "$@"
+  case ${1:-} in -h | --help) help_logs; return 0 ;; esac
+  orig="$*"
   follow=0
   since=""
   while [ "$#" -gt 0 ]; do
     case $1 in
-      -f|--follow) follow=1; shift ;;
-      --since) [ "$#" -ge 2 ] || die "--since needs a value"; since=$2; shift 2 ;;
-      *) die "unknown option for logs: $1" ;;
+      -f | --follow) follow=1; shift ;;
+      --since)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || usage_err logs "--since needs a value, e.g. --since 2h"
+        since=$2
+        shift 2
+        ;;
+      *) usage_err logs "unknown option for logs: $1" ;;
     esac
   done
+  # Parsed before need_docker: the re-exec must carry -f/--since, and a typo
+  # should not cost a password prompt.
+  # shellcheck disable=SC2086
+  need_docker $orig
   # Four cases rather than a joined option string: `--since "2 hours"` is one
   # argument, and word splitting would turn it into two.
   if [ "$follow" = 1 ] && [ -n "$since" ]; then
@@ -177,12 +600,15 @@ cmd_logs() {
 }
 
 cmd_backup() {
+  case ${1:-} in -h | --help) help_backup; return 0 ;; esac
+  [ "$#" -le 1 ] || usage_err backup "backup takes at most one directory (got: $1 and $2)"
   # No need_docker here: the script calls `sudo docker` itself, and re-running
   # oc as root would leave the archive owned by root.
   run sh scripts/backup.sh "$@"
 }
 
 cmd_restore() {
+  case ${1:-} in -h | --help) help_restore; return 0 ;; esac
   check=0
   yes=0
   archive=""
@@ -191,18 +617,18 @@ cmd_restore() {
     case $a in
       --check) check=1 ;;
       --yes) yes=1 ;;
-      -*) die "unknown option for restore: $a" ;;
+      -*) usage_err restore "unknown option for restore: $a" ;;
       *)
         archives=$((archives + 1))
-        [ "$archives" -eq 1 ] || die "restore takes one archive (got: $archive and $a)"
+        [ "$archives" -eq 1 ] || usage_err restore "restore takes one archive (got: $archive and $a)"
         archive=$a
         ;;
     esac
   done
-  [ -n "$archive" ] || die "restore needs an archive: oc restore --check FILE"
+  [ -n "$archive" ] || usage_err restore "restore needs an archive: oc restore --check FILE"
   if [ "$check" = 0 ] && [ "$yes" != 1 ]; then
-    printf 'oc: restoring overwrites the oc-data volume (sessions, credentials, snapshots).\n    Re-run with --yes if that is what you want.\n' >&2
-    exit 1
+    err "restoring overwrites the oc-data volume (sessions, credentials, snapshots)" \
+      "re-run with --yes if that is what you want"
   fi
   if [ "$check" = 1 ]; then
     run sh scripts/restore.sh --check "$archive"
@@ -212,31 +638,28 @@ cmd_restore() {
 }
 
 cmd_audit() {
-  [ "$#" -le 1 ] || die "audit takes at most one window, e.g. oc audit 7d"
+  case ${1:-} in -h | --help) help_audit; return 0 ;; esac
+  [ "$#" -le 1 ] || usage_err audit "audit takes at most one window, e.g. oc audit 7d"
   run sh scripts/audit.sh "${1:-24h}"
 }
 
 cmd_config() {
-  # The rules live in scripts/check-env.sh, the same ones setup.sh enforces.
-  if out=$(sh scripts/check-env.sh all 2>&1); then
-    :
-  else
-    status=$?
-    case $status in
-      2) printf 'warning: %s\n' "$out" >&2 ;;
-      *) die "$out" ;;
-    esac
-  fi
-  need_docker "$@"
-  run docker compose config -q || exit 1
-  printf 'configuration is valid\n'
+  case ${1:-} in -h | --help) help_config; return 0 ;; esac
+  no_args "$@"
+  check_env
+  need_docker
+  run docker compose config -q || usage_err config "the compose file does not parse"
+  printf '%sconfiguration is valid%s\n' "$C_GREEN" "$C_RESET"
 }
 
-pass() { printf 'PASS %s %s\n' "$1" "$2"; PASSED=$((PASSED + 1)); }
-warn() { printf 'WARN %s %s\n' "$1" "$2"; WARNED=$((WARNED + 1)); }
-fail() { printf 'FAIL %s %s\n' "$1" "$2"; FAILED=$((FAILED + 1)); }
-
 cmd_doctor() {
+  case ${1:-} in
+    -h | --help) help_doctor; return 0 ;;
+    --json) JSON=1 ;;
+    '') ;;
+    *) no_args "$@" ;;
+  esac
+
   # A machine without docker still gets the checks that do not need it.
   have_docker=1
   if ! docker info >/dev/null 2>&1; then
@@ -249,42 +672,42 @@ cmd_doctor() {
 
   # 1. .env present, private, with a real password
   if [ ! -f .env ]; then
-    fail 1 "no .env — run ./setup.sh"
+    fail 1 "no .env in this directory" "run ./setup.sh" "./setup.sh"
   else
     mode=$(stat -c %a .env 2>/dev/null || echo "?")
     if out=$(sh scripts/check-env.sh password 2>&1); then
       if [ "$mode" = 600 ]; then
         pass 1 ".env is present, private, with a password"
       else
-        warn 1 ".env mode is $mode, expected 600"
+        warn 1 ".env mode is $mode, expected 600" "chmod 600 .env"
       fi
     else
-      fail 1 "$out"
+      fail 1 "$out" "write a real password into .env" "printf 'OPENCODE_PASSWORD=%s\\n' \"\$(openssl rand -base64 24)\" >> .env"
     fi
   fi
 
   # 2. the paths compose needs (rules shared with setup.sh and oc config)
-  if out=$(sh scripts/check-env.sh paths 2>&1); then
+  code=0
+  out=$(sh scripts/check-env.sh paths 2>&1) || code=$?
+  if [ "$code" -eq 0 ]; then
     pass 2 "paths are set and the project root exists"
   else
-    status=$?
-    case $status in
-      2) warn 2 "$out" ;;
-      *) fail 2 "$out" ;;
+    case $code in
+      2) warn 2 "$out" "mkdir -p \"\$PROJECTS_DIR\" or edit .env" ;;
+      *) fail 2 "$out" "fix PROJECTS_DIR in .env" "oc config" ;;
     esac
   fi
 
   # 3. the compose file parses with this environment
   if [ "$have_docker" = 0 ]; then
-    warn 3 "docker daemon unreachable; cannot parse the compose file"
+    warn 3 "docker daemon unreachable; cannot parse the compose file" "start docker" "sudo systemctl start docker"
   elif docker compose config -q >/dev/null 2>&1; then
     pass 3 "compose configuration is valid"
   else
-    fail 3 "compose configuration is invalid (run: oc config)"
+    fail 3 "compose configuration is invalid" "run oc config" "oc config"
   fi
 
   # 4. the image is not older than the files baked into it
-  image=opencode-docker-opencode:local
   # safe.directory: this often runs as root in a user-owned checkout, where git
   # otherwise refuses and the check would silently degrade to a warning.
   newest=$(git -c "safe.directory=$REPO" log -1 --format=%ct -- \
@@ -292,25 +715,25 @@ cmd_doctor() {
   if [ "$have_docker" = 0 ]; then
     built=""
   else
-    built=$(docker image inspect -f '{{.Created}}' "$image" 2>/dev/null || true)
+    built=$(docker image inspect -f '{{.Created}}' "$IMAGE" 2>/dev/null || true)
   fi
   if [ "$have_docker" = 0 ]; then
-    warn 4 "docker daemon unreachable; cannot date the image"
+    warn 4 "docker daemon unreachable; cannot date the image" "start docker" "sudo systemctl start docker"
   elif [ -z "$built" ]; then
-    warn 4 "image $image not built yet (oc up --build)"
+    warn 4 "image $IMAGE not built yet" "build it" "oc up --build"
   elif [ -z "$newest" ]; then
-    warn 4 "cannot read git history here (dubious ownership?); image age unverified"
+    warn 4 "cannot read git history here (dubious ownership?)" "run oc from a normal terminal"
   else
     built_epoch=$(date -d "$built" +%s 2>/dev/null || true)
     # Both sides must be a plain integer; anything else is "cannot compare",
     # never an epoch-0 image that fails or a silently passing `-lt`.
-    case $built_epoch in ''|*[!0-9]*) built_epoch="" ;; esac
-    case $newest in ''|*[!0-9]*) newest_num="" ;; *) newest_num=$newest ;; esac
+    case $built_epoch in '' | *[!0-9]*) built_epoch="" ;; esac
+    case $newest in '' | *[!0-9]*) newest_num="" ;; *) newest_num=$newest ;; esac
     case ${built_epoch:-x}$newest_num in
-      *[!0-9]*) warn 4 "cannot compare dates (built='$built'); image age unverified" ;;
+      *[!0-9]*) warn 4 "cannot compare dates (built='$built')" "rebuild to be sure" "oc up --build" ;;
       *)
         if [ "$built_epoch" -lt "$newest_num" ]; then
-          fail 4 "image is older than the last change to the build inputs (oc up --build)"
+          fail 4 "image is older than the last change to the build inputs" "rebuild it" "oc up --build"
         else
           pass 4 "image is newer than the build inputs"
         fi
@@ -322,26 +745,26 @@ cmd_doctor() {
   if [ ! -f scripts/gen-seccomp.mjs ]; then
     warn 5 "no generator in this tree; cannot verify the seccomp profile"
   elif ! command -v node >/dev/null 2>&1; then
-    warn 5 "node is not installed; cannot verify the seccomp profile"
+    warn 5 "node is not installed; cannot verify the seccomp profile" "install node on the host" "sudo apt install nodejs"
   elif node scripts/gen-seccomp.mjs --check >/dev/null 2>&1; then
     pass 5 "seccomp profile matches its generator"
   else
-    fail 5 "seccomp profile is stale: node scripts/gen-seccomp.mjs"
+    fail 5 "seccomp profile is stale" "regenerate it" "node scripts/gen-seccomp.mjs"
   fi
 
   # 6. the policy baked into the image is the policy in this tree
   label=""
-  [ "$have_docker" = 0 ] || label=$(docker image inspect -f '{{index .Config.Labels "org.opencode-docker.policy-sha"}}' "$image" 2>/dev/null || true)
+  [ "$have_docker" = 0 ] || label=$(docker image inspect -f '{{index .Config.Labels "org.opencode-docker.policy-sha"}}' "$IMAGE" 2>/dev/null || true)
   if [ "$have_docker" = 0 ]; then
-    warn 6 "docker daemon unreachable; cannot read the image label"
+    warn 6 "docker daemon unreachable; cannot read the image label" "start docker" "sudo systemctl start docker"
   elif [ -z "$built" ]; then
-    warn 6 "no image to check (oc up --build)"
+    warn 6 "no image to check" "build it" "oc up --build"
   elif [ -z "$label" ] || [ "$label" = "<no value>" ]; then
-    warn 6 "image predates the policy label (oc up --build)"
+    warn 6 "image predates the policy label" "rebuild with the digest" "oc up --build"
   elif [ "$label" = "$(policy_sha)" ]; then
     pass 6 "image carries the current policy digest"
   else
-    fail 6 "image carries a different policy: rebuild with oc up --build"
+    fail 6 "image carries a different policy" "rebuild with the digest" "oc up --build"
   fi
 
   # 7. the server is healthy and the front door requires a password
@@ -350,18 +773,18 @@ cmd_doctor() {
   state=""
   [ "$have_docker" = 0 ] || state=$(docker compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null || true)
   if [ "$have_docker" = 0 ]; then
-    warn 7 "docker daemon unreachable; cannot check the front door"
+    warn 7 "docker daemon unreachable; cannot check the front door" "start docker" "sudo systemctl start docker"
   elif ! printf '%s\n' "$state" | grep -q '^opencode healthy'; then
-    fail 7 "the opencode service is not healthy (oc status)"
+    fail 7 "the opencode service is not healthy" "look at the log" "oc logs --since 5m"
   else
     code4=$(curl -g -s -o /dev/null -w '%{http_code}' --max-time 3 "$OC_URL/api/info" || true)
     code6=$(curl -g -s -o /dev/null -w '%{http_code}' --max-time 3 "http://[::1]:8080/api/info" || true)
     if [ "$code4" != 401 ]; then
-      fail 7 "nginx answered $code4 on 127.0.0.1:8080 (expected 401 without credentials)"
+      fail 7 "nginx answered $code4 on 127.0.0.1:8080 (expected 401 without credentials)" "check the front door" "oc logs --since 5m"
     elif [ "$code6" = 000 ]; then
-      warn 7 "healthy, but [::1]:8080 is unreachable (host without IPv6?)"
+      warn 7 "healthy, but [::1]:8080 is unreachable (host without IPv6?)" "drop the [::1] publish from docker-compose.yml"
     elif [ "$code6" != 401 ]; then
-      fail 7 "nginx answered $code6 on [::1]:8080 (expected 401 without credentials)"
+      fail 7 "nginx answered $code6 on [::1]:8080 (expected 401 without credentials)" "check the front door" "oc logs --since 5m"
     else
       pass 7 "service healthy; both loopback addresses answer 401"
     fi
@@ -372,24 +795,35 @@ cmd_doctor() {
   # deny/allow keeps the count and changes the security.
   floor=${OC_FLOOR:-/etc/opencode/opencode.json}
   if ! command -v jq >/dev/null 2>&1; then
-    warn 8 "jq is not installed; cannot compare $floor"
+    warn 8 "jq is not installed; cannot compare $floor" "install jq" "sudo apt install jq"
   elif [ ! -r "$floor" ]; then
-    warn 8 "no host floor at $floor (the container floor still applies)"
+    warn 8 "no host floor at $floor (the container floor still applies)" "install it" "sudo install -m 644 -o root -g root policy/opencode.json $floor"
   else
     repo_h=$(jq -S . policy/opencode.json 2>/dev/null | sha256sum | cut -d' ' -f1)
     host_h=$(jq -S . "$floor" 2>/dev/null | sha256sum | cut -d' ' -f1)
     if [ -n "$repo_h" ] && [ "$repo_h" = "$host_h" ]; then
       pass 8 "host floor matches this tree ($(jq '.policies | length' policy/opencode.json) policies)"
     else
-      fail 8 "host floor differs from policy/opencode.json (counts: $(jq '.policies|length' "$floor" 2>/dev/null || echo ?) vs $(jq '.policies|length' policy/opencode.json 2>/dev/null || echo ?)): sudo install -m 644 -o root -g root policy/opencode.json $floor"
+      fail 8 "host floor differs from policy/opencode.json ($(jq '.policies|length' "$floor" 2>/dev/null || echo ?) vs $(jq '.policies|length' policy/opencode.json 2>/dev/null || echo ?) policies)" \
+        "reinstall it" "sudo install -m 644 -o root -g root policy/opencode.json $floor"
     fi
   fi
 
-  printf '\nsummary: %s passed, %s warned, %s failed\n' "$PASSED" "$WARNED" "$FAILED"
+  if [ "$JSON" = 1 ]; then
+    printf '%s\n' "$JSON_ROWS" |
+      jq -R -s --argjson passed "$PASSED" --argjson warned "$WARNED" --argjson failed "$FAILED" '
+        split("\n") | map(select(length > 0) | split("\t"))
+        | map({id: (.[0] | tonumber), status: .[1], text: .[2], fix: (.[3] // "")})
+        | {passed: $passed, warned: $warned, failed: $failed, checks: .}'
+  else
+    printf '\n%s%d passed, %d warned, %d failed%s\n' \
+      "$C_BOLD" "$PASSED" "$WARNED" "$FAILED" "$C_RESET"
+  fi
   [ "$FAILED" -eq 0 ] || exit 1
 }
 
 cmd_version() {
+  case ${1:-} in -h | --help) help_version; return 0 ;; esac
   no_args "$@"
   printf 'oc %s\n' "$(git describe --tags --always 2>/dev/null || echo unknown)"
   printf 'repo %s\n' "$REPO"
@@ -400,7 +834,7 @@ cmd=${1:-help}
 [ "$#" -gt 0 ] && shift || true
 
 case $cmd in
-  help|--help|-h) usage ;;
+  help | --help | -h) cmd_help "$@" ;;
   version) cmd_version "$@" ;;
   up) cmd_up "$@" ;;
   down) cmd_down "$@" ;;
@@ -415,8 +849,8 @@ case $cmd in
   config) cmd_config "$@" ;;
   doctor) cmd_doctor "$@" ;;
   *)
-    printf 'unknown command: %s\n\n' "$cmd" >&2
-    usage >&2
+    printf '%soc:%s unknown command: %s%s\n' "$C_RED" "$C_RESET" "$cmd" "$(suggest "$cmd")" >&2
+    printf '     %shint:%s oc help\n' "$C_DIM" "$C_RESET" >&2
     exit 2
     ;;
 esac

@@ -301,7 +301,7 @@ oc help
 | `oc up [--build]` | `compose up -d --wait --wait-timeout 90`; `--build` rebuilds and stamps the policy digest |
 | `oc down [--volumes --yes]` | `compose down`; `--volumes` needs `--yes` because it destroys sessions |
 | `oc restart` | `compose up -d --force-recreate --wait` (recreate, not restart: nginx caches the upstream) |
-| `oc status` | `compose ps` |
+| `oc status [--json]` | `compose ps`, one JSON object per service with `--json` |
 | `oc pair` | mints a one-time pairing link for the desktop app |
 | `oc shell [cmd…]` | a shell inside the container, or one command |
 | `oc logs [-f] [--since W]` | the server log |
@@ -309,7 +309,7 @@ oc help
 | `oc restore --check FILE` / `oc restore FILE --yes` | `scripts/restore.sh` |
 | `oc audit [window]` | `scripts/audit.sh` |
 | `oc config` | validates `.env` and the compose file |
-| `oc doctor` | the eight checks below |
+| `oc doctor [--json]` | the eight checks below |
 
 Docker normally needs elevated rights here; any command that needs the daemon
 re-runs itself through `sudo`. Set `OC_NO_SUDO=1` to disable that and fail with
@@ -322,13 +322,41 @@ the reason instead. `OC_VERBOSE=1` prints every command first.
 | 1 | `.env` exists, is mode 600, and has a real password |
 | 2 | `HOST_HOME`/`PROJECTS_DIR` are set, and the latter is not `/` or `$HOME` |
 | 3 | `docker compose config -q` accepts this environment |
-| 4 | the image is newer than the last change to `Dockerfile`, `overlay.mjs`, `entrypoint.sh`, `commands/`, `policy/`, `seccomp/`, `bin/` |
+| 4 | the image is newer than the last change to `Dockerfile`, `overlay.mjs`, `entrypoint.sh`, `commands/`, `policy/`, `seccomp/` |
 | 5 | `seccomp/opencode.json` matches `scripts/gen-seccomp.mjs` |
 | 6 | the image's `org.opencode-docker.policy-sha` label matches `policy/opencode.json` |
 | 7 | `opencode` is healthy and both loopback addresses answer `401` |
 | 8 | `/etc/opencode/opencode.json` has the same policy count as this tree |
 
-`PASS` is good, `WARN` is survivable, `FAIL` exits 1. Checks 4 and 6 are the two
+`PASS` is good, `WARN` is survivable, `FAIL` exits 1. A `WARN` or `FAIL`
+carries a `fix:` line with the command that resolves it.
+
+### Help, colour, and machine-readable output
+
+```
+oc help              # the table above
+oc help up           # usage, flags, two examples, and what it touches
+oc up --help         # the same page
+oc doctor --json | jq .
+```
+
+Every command has its own page, and `oc <cmd> --help` is the same text, so
+there is exactly one place where help lives. A misspelled command gets a
+suggestion (`oc stauts` → `did you mean: status?`) instead of a wall of output.
+
+Colour is used only when stdout is a terminal, `TERM` is not `dumb`, and
+`NO_COLOR` is unset or empty — the convention from
+[no-color.org](https://no-color.org), so piping or redirecting already gives
+plain text. `OC_ASCII=1` drops the `✓ ! ✗` icons and prints the words instead,
+for terminals or fonts that render them badly; the words are present in every
+mode, so `oc doctor | grep FAIL` always works.
+
+Exit codes: `0` success, `1` the environment or a check is wrong, `2` usage
+error (unknown command, unknown flag, a flag missing its value). Usage errors
+are detected *before* anything runs as root, so a typo never asks for a
+password.
+
+Checks 4 and 6 are the two
 that caught real problems here: a stale image ran for an hour while every test
 passed, because the tests read the tree and the container ran the old copy.
 

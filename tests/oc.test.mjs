@@ -59,7 +59,7 @@ function makeShims() {
   return dir;
 }
 
-function makeRepo({ env, scripts = {} } = {}) {
+function makeRepo({ env, noEnv = false, scripts = {} } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "oc-repo-"));
   mkdirSync(path.join(dir, "bin"));
   mkdirSync(path.join(dir, "scripts"));
@@ -76,12 +76,14 @@ function makeRepo({ env, scripts = {} } = {}) {
     writeFileSync(p, body);
     chmodSync(p, 0o755);
   }
-  writeFileSync(
-    path.join(dir, ".env"),
-    env ??
-      "OPENCODE_PASSWORD=secret123\nHOST_UID=1000\nHOST_GID=1000\nHOST_HOME=/home/x\nPROJECTS_DIR=/home/x/projects\n"
-  );
-  chmodSync(path.join(dir, ".env"), 0o600);
+  if (!noEnv) {
+    writeFileSync(
+      path.join(dir, ".env"),
+      env ??
+        "OPENCODE_PASSWORD=secret123\nHOST_UID=1000\nHOST_GID=1000\nHOST_HOME=/home/x\nPROJECTS_DIR=/home/x/projects\n"
+    );
+    chmodSync(path.join(dir, ".env"), 0o600);
+  }
   return dir;
 }
 
@@ -392,7 +394,7 @@ test("doctor still reports the offline checks when docker is unreachable", () =>
 test("commands without options reject stray arguments", () => {
   for (const cmd of ["restart", "status", "pair", "version"]) {
     const r = oc([cmd, "typo"]);
-    assert.equal(r.code, 1, `${cmd} must reject arguments`);
+    assert.equal(r.code, 2, `${cmd} must reject arguments`);
     assert.match(r.stderr, /takes no arguments/);
     assert.doesNotMatch(r.calls, /CALL docker/);
   }
@@ -400,7 +402,7 @@ test("commands without options reject stray arguments", () => {
 
 test("restore accepts exactly one archive", () => {
   const r = oc(["restore", "a.tar.gz", "b.tar.gz", "--yes"]);
-  assert.equal(r.code, 1);
+  assert.equal(r.code, 2);
   assert.match(r.stderr, /one archive/);
   assert.doesNotMatch(r.calls, /CALL sh/);
 });
@@ -422,4 +424,78 @@ test(".env values with spaces are accepted, not reported as missing", () => {
     encoding: "utf8",
   });
   assert.equal(res.status, 0, res.stdout);
+});
+
+test("a piped command emits no escape sequences", () => {
+  const r = oc(["help"]);
+  assert.equal(r.code, 0);
+  assert.doesNotMatch(r.stdout, /\u001b\[/);
+});
+
+test("OC_ASCII uses plain icons even on a UTF-8 terminal", () => {
+  const r = oc(["doctor"], { env: { OC_ASCII: "1", OC_NO_SUDO: "1" } });
+  assert.doesNotMatch(r.stdout, /[✓✗]/);
+  assert.match(r.stdout, /^(PASS|WARN|FAIL) [0-9] /m);
+});
+
+test("oc help up prints that command's own help", () => {
+  const r = oc(["help", "up"]);
+  assert.equal(r.code, 0);
+  assert.match(r.stdout, /usage: oc up/);
+  assert.match(r.stdout, /--build/);
+  assert.match(r.stdout, /oc up --build/);
+});
+
+test("up --help is the same page as oc help up", () => {
+  const a = oc(["help", "up"]);
+  const b = oc(["up", "--help"]);
+  assert.equal(b.code, 0);
+  assert.equal(b.stdout, a.stdout);
+  assert.equal(b.calls, "");
+});
+
+test("a near-miss command suggests the real one", () => {
+  const r = oc(["stauts"]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /did you mean: status\?/);
+});
+
+test("a bad flag is a usage error before sudo", () => {
+  const r = oc(["up", "--nope"], { env: { SHIM_DOCKER_INFO_EXIT: "1" } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /unknown option for up: --nope/);
+  assert.doesNotMatch(r.calls, /CALL sudo/);
+});
+
+test("a flag without its value is caught before docker", () => {
+  const r = oc(["logs", "--since"], { env: { SHIM_DOCKER_INFO_EXIT: "1" } });
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /--since needs a value/);
+  assert.doesNotMatch(r.calls, /CALL docker/);
+});
+
+test("a missing .env names the fix", () => {
+  const repo = makeRepo({ noEnv: true });
+  const r = oc(["up"], { repo, env: { OC_NO_SUDO: "1" } });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /setup\.sh/);
+  assert.doesNotMatch(r.calls, /CALL docker/);
+});
+
+test("doctor --json is machine readable", () => {
+  const r = oc(["doctor", "--json"], { env: { OC_NO_SUDO: "1" } });
+  const parsed = JSON.parse(r.stdout);
+  assert.equal(parsed.checks.length, 8);
+  assert.ok(parsed.passed + parsed.warned + parsed.failed === 8);
+  for (const c of parsed.checks) {
+    assert.ok(["1", "2", "3", "4", "5", "6", "7", "8"].includes(String(c.id)), c.id);
+    assert.ok(["pass", "warn", "fail"].includes(c.status), c.status);
+  }
+});
+
+test("doctor carries a fix line on a failing check", () => {
+  const repo = makeRepo({ noEnv: true });
+  const r = oc(["doctor"], { repo, env: { OC_NO_SUDO: "1" } });
+  assert.equal(r.code, 1);
+  assert.match(r.stdout, /fix: .*setup\.sh/);
 });
