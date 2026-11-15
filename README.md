@@ -227,6 +227,29 @@ Do not pass `--pull`: that is the request Docker Hub refuses. The trade-off is
 explicit — a mirror tag is not content-addressed, so the build is pinned only
 on machines that can reach Docker Hub.
 
+**The desktop app says `Failed to send prompt — Authentication required`.** The
+app has fallen back to a local service of its own instead of the container.
+Two things make it worse than it looks:
+
+```bash
+# what the app is actually talking to
+ss -ltnp | grep -E ':4097|:8080'
+```
+
+If `:4097` is listening on `0.0.0.0`, a host-side agent service is reachable
+from the network. Stop it and re-point the app at the container:
+
+```bash
+CLI=~/.config/ai.opencode.desktop/cli/2.3.0-x64/opencode-cli
+$CLI service stop
+rm -f ~/.config/opencode/service.json ~/.local/state/opencode/service.json
+cd ~/opencode-docker
+sudo docker compose exec opencode opencode pair --url http://opencode.localhost:8080
+```
+
+Paste the printed link into the app's server address field. With the stale
+`service.json` gone, any future fallback binds loopback only.
+
 ## Logs, stop, destroy, upgrade
 
 ```bash
