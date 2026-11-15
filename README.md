@@ -460,7 +460,7 @@ broken one look the same. This reads them out of the server log.
 
 ```bash
 ./scripts/audit.sh          # last 24h
-./scripts/audit.sh 7d       # any docker log window
+./scripts/audit.sh 7d       # 7d/2w work here though docker itself wants hours
 ```
 
 It counts three kinds of denial — agent rules, the `/etc` policy layer, and

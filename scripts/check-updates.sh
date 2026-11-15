@@ -12,9 +12,16 @@ dockerfile="$repo/Dockerfile"
 
 [ -r "$dockerfile" ] || { echo "cannot read $dockerfile" >&2; exit 1; }
 
-command -v npm >/dev/null 2>&1 || {
-  echo "npm is not on PATH; install Node or run this from the container image" >&2
-  exit 1
+# Ask the registry directly instead of shelling out to `npm view`: the timer runs
+# this as root, where a user-local node toolchain is not on PATH.
+command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
+
+latest_version() {
+  # Scoped names must be encoded: @scope/name -> @scope%2fname
+  encoded=$(printf '%s' "$1" | sed 's|/|%2f|')
+  curl -fsS --max-time 10 "https://registry.npmjs.org/$encoded/latest" 2>/dev/null |
+    jq -r '.version // empty' 2>/dev/null
 }
 
 # Pull the spec for a package out of the Dockerfile: the first `name@version`
@@ -39,8 +46,8 @@ for pkg in @opencode/cli @upstash/context7-mcp pnpm yarn playwright; do
   pinned=${spec#"$pkg@"}
   plain=$(printf '%s' "$pinned" | sed 's/^[\^~]//')
 
-  latest=$(npm view "$pkg" version 2>/dev/null) || latest='?'
-  [ "$latest" = '?' ] && { printf '%-26s %-12s %-12s %s\n' "$pkg" "$pinned" '?' 'lookup failed (offline?)'; continue; }
+  latest=$(latest_version "$pkg") || latest=''
+  [ -n "$latest" ] || { printf '%-26s %-12s %-12s %s\n' "$pkg" "$pinned" '?' 'lookup failed (offline?)'; continue; }
 
   if [ "$plain" = "$latest" ]; then
     state='up to date'
