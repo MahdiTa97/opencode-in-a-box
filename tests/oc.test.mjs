@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, chmodSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, chmodSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -13,12 +13,38 @@ const REPO = path.resolve(import.meta.dirname, "..");
 // SHIM_<NAME>_OUT.
 const SHIM = `#!/bin/sh
 name=$(basename "$0")
-{ printf 'CALL %s\\n' "$name"; for a in "$@"; do printf 'A %s\\n' "$a"; done; } >> "\${SHIM_LOG:?}"
-case "$name $1" in
-  "docker info") exit "\${SHIM_DOCKER_INFO_EXIT:-0}" ;;
+{ printf 'CALL %s\n' "$name"; for a in "$@"; do printf 'A %s\n' "$a"; done; } >> "\${SHIM_LOG:?}"
+case "$name" in
+  docker)
+    if [ "\${1:-}" = info ]; then
+      if [ -n "\${SHIM_DOCKER_INFO_FAIL_UNLESS:-}" ]; then
+        [ -f "\$SHIM_DOCKER_INFO_FAIL_UNLESS" ] && exit 0 || exit 1
+      fi
+      exit "\${SHIM_DOCKER_INFO_EXIT:-0}"
+    fi
+    if [ "\${1:-}" = compose ] && [ "\${2:-}" = ps ] && [ -n "\${SHIM_PS_OUT:-}" ]; then
+      printf '%s\\n' "\$SHIM_PS_OUT"
+    fi
+    ;;
+  sudo)
+    if [ "\${SHIM_SUDO_EXEC:-0}" = 1 ]; then
+      [ -n "\${SHIM_DOCKER_INFO_FAIL_UNLESS:-}" ] && : > "\$SHIM_DOCKER_INFO_FAIL_UNLESS"
+      [ "\${1:-}" = -- ] && shift
+      exec "\$@"
+    fi
+    ;;
+  curl)
+    if [ -n "\${SHIM_CURL_SEQ:-}" ]; then
+      n=$(cat "\$SHIM_LOG.counter" 2>/dev/null || echo 0)
+      n=$((n + 1))
+      echo "\$n" > "\$SHIM_LOG.counter"
+      printf '%s' "$(printf '%s\\n' "\$SHIM_CURL_SEQ" | sed -n "\${n}p")"
+    else
+      printf '%s' "\${SHIM_CURL_OUT:-000}"
+    fi
+    exit 0
+    ;;
 esac
-out="SHIM_\${name}_OUT"
-eval "printf '%s' \\"\\\${$out:-}\\""
 exit "\${SHIM_EXIT:-0}"
 `;
 
@@ -44,6 +70,7 @@ function makeRepo({ env, scripts = {} } = {}) {
   copyFileSync(path.join(REPO, "docker-compose.yml"), path.join(dir, "docker-compose.yml"));
   copyFileSync(path.join(REPO, "policy", "opencode.json"), path.join(dir, "policy", "opencode.json"));
   copyFileSync(path.join(REPO, "seccomp", "opencode.json"), path.join(dir, "seccomp", "opencode.json"));
+  copyFileSync(path.join(REPO, "scripts", "check-env.sh"), path.join(dir, "scripts", "check-env.sh"));
   for (const [name, body] of Object.entries(scripts)) {
     const p = path.join(dir, "scripts", name);
     writeFileSync(p, body);
@@ -58,12 +85,12 @@ function makeRepo({ env, scripts = {} } = {}) {
   return dir;
 }
 
-function oc(args, { repo, env = {}, cwd } = {}) {
+function oc(args, { repo, env = {}, cwd, entry } = {}) {
   const root = repo ?? makeRepo();
   const shims = makeShims();
   const log = path.join(shims, "log");
   writeFileSync(log, "");
-  const res = spawnSync(path.join(root, "bin", "oc"), args, {
+  const res = spawnSync(entry ? path.resolve(root, entry) : path.join(root, "bin", "oc"), args, {
     cwd: cwd ?? root,
     encoding: "utf8",
     env: {
@@ -281,4 +308,77 @@ test("the Dockerfile carries the policy digest label", () => {
   const dockerfile = readFileSync(path.join(REPO, "Dockerfile"), "utf8");
   assert.match(dockerfile, /LABEL org\.opencode-docker\.policy-sha=/);
   assert.match(readFileSync(path.join(REPO, "bin", "oc"), "utf8"), /--build-arg/);
+});
+
+test("doctor passes check 7 on a healthy install", () => {
+  const repo = makeRepo();
+  const r = oc(["doctor"], {
+    repo,
+    env: { SHIM_PS_OUT: "opencode healthy", SHIM_CURL_OUT: "401", OC_FLOOR: "/nonexistent/floor.json" },
+  });
+  assert.match(r.stdout, /PASS 7 service healthy; both loopback addresses answer 401/, r.stdout);
+});
+
+test("doctor fails check 7 when only one loopback address answers 401", () => {
+  const repo = makeRepo();
+  const r = oc(["doctor"], {
+    repo,
+    env: {
+      SHIM_PS_OUT: "opencode healthy",
+      SHIM_CURL_SEQ: "401\n502",
+      OC_FLOOR: "/nonexistent/floor.json",
+    },
+  });
+  assert.match(r.stdout, /FAIL 7 nginx answered 502 on \[::1\]:8080/, r.stdout);
+});
+
+test("the sudo re-exec keeps the command and its arguments", () => {
+  const repo = makeRepo();
+  const marker = path.join(mkdtempSync(path.join(tmpdir(), "oc-root-")), "daemon-ok");
+  const r = oc(["logs", "-f", "--since", "2h"], {
+    repo,
+    env: { SHIM_DOCKER_INFO_FAIL_UNLESS: marker, SHIM_SUDO_EXEC: "1" },
+  });
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(r.calls.includes("CALL sudo\n"), r.calls);
+  assert.ok(hasCall(r.calls, "docker", "compose", "logs", "-f", "--since", "2h", "opencode"), r.calls);
+});
+
+test("a symlinked oc still finds the repo", () => {
+  const repo = makeRepo();
+  const link = path.join(mkdtempSync(path.join(tmpdir(), "oc-link-")), "oc");
+  symlinkSync(path.join(repo, "bin", "oc"), link);
+  const res = spawnSync(link, ["version"], { encoding: "utf8" });
+  assert.match(res.stdout, new RegExp(`repo ${repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), res.stdout);
+});
+
+test("a relative invocation still finds the repo", () => {
+  const repo = makeRepo();
+  const res = spawnSync("./oc", ["version"], { cwd: path.join(repo, "bin"), encoding: "utf8" });
+  assert.match(res.stdout, new RegExp(`repo ${repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), res.stdout);
+});
+
+test("doctor fails check 8 when the host floor changed but kept the count", () => {
+  const repo = makeRepo();
+  const floor = path.join(mkdtempSync(path.join(tmpdir(), "oc-floor-")), "floor.json");
+  const text = readFileSync(path.join(repo, "policy", "opencode.json"), "utf8");
+  writeFileSync(floor, text.replace('"deny"', '"allow"'));
+  const r = oc(["doctor"], { repo, env: { OC_FLOOR: floor, SHIM_PS_OUT: "opencode healthy", SHIM_CURL_OUT: "401" } });
+  assert.match(r.stdout, /FAIL 8 host floor differs/, r.stdout);
+});
+
+test("doctor fails check 5 when the seccomp profile drifts", () => {
+  const repo = makeRepo({ scripts: { "gen-seccomp.mjs": "process.exit(1);\n" } });
+  const r = oc(["doctor"], { repo, env: { OC_FLOOR: "/nonexistent/floor.json", SHIM_PS_OUT: "opencode healthy", SHIM_CURL_OUT: "401" } });
+  assert.match(r.stdout, /FAIL 5 seccomp profile is stale/, r.stdout);
+});
+
+test("doctor still reports the offline checks when docker is unreachable", () => {
+  const repo = makeRepo();
+  const r = oc(["doctor"], { repo, env: { OC_NO_SUDO: "1", SHIM_DOCKER_INFO_EXIT: "1", OC_FLOOR: "/nonexistent/floor.json" } });
+  assert.match(r.stdout, /PASS 1 /, r.stdout);
+  assert.match(r.stdout, /WARN 3 docker daemon unreachable/, r.stdout);
+  assert.match(r.stdout, /WARN 7 docker daemon unreachable/, r.stdout);
+  assert.doesNotMatch(r.stdout, /FAIL /, r.stdout);
+  assert.equal(r.code, 0, r.stdout);
 });

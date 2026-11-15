@@ -74,36 +74,24 @@ add_if_missing PROJECTS_DIR "$HOME/projects"
 chmod 600 .env
 
 # PROJECTS_DIR is the only host tree the container can read and write, so a
-# careless value here is a real hole, not a typo.
+# careless value here is a real hole. The rules live in scripts/check-env.sh so
+# `oc config` and `oc doctor` cannot disagree with this script.
 projects_dir="$(sed -n 's/^PROJECTS_DIR=//p' .env | tail -1)"
-[ -n "$projects_dir" ] || { echo "error: PROJECTS_DIR is empty in .env" >&2; exit 1; }
-case "$projects_dir" in
-  /*) ;;
-  *) echo "error: PROJECTS_DIR must be an absolute path (got '$projects_dir')" >&2; exit 1 ;;
-esac
-case "$projects_dir" in
-  /) echo "error: PROJECTS_DIR must not be / — that mounts the whole host" >&2; exit 1 ;;
-  "$HOME") echo "error: PROJECTS_DIR must not be \$HOME itself; use a child directory" >&2; exit 1 ;;
-esac
 mkdir -p "$projects_dir" 2>/dev/null || { echo "error: cannot create $projects_dir" >&2; exit 1; }
-[ -w "$projects_dir" ] || { echo "error: $projects_dir is not writable by $(id -un)" >&2; exit 1; }
+sh scripts/check-env.sh all || exit 1
 case "$projects_dir" in
   "$HOME"/*) ;;
   *) echo "note: PROJECTS_DIR points outside \$HOME ($projects_dir)" ;;
 esac
 
-if grep -qE '^OPENCODE_PASSWORD=(change-me)?$' .env; then
-  echo "error: .env has an empty or example OPENCODE_PASSWORD; set a real one" >&2
-  exit 1
-fi
 if [ ! -f "$HOME/.config/opencode/opencode.jsonc" ] && [ ! -f "$HOME/.config/opencode/opencode.json" ]; then
   echo "note: no host OpenCode config found; the container starts with a minimal one"
 fi
 
 echo "password: .env (OPENCODE_PASSWORD)"
 echo "next:"
-echo "  sudo docker compose build"
-echo "  sudo docker compose up -d --force-recreate"
+echo "  ./bin/oc up --build"
+echo "  ./bin/oc pair"
 echo "  sudo docker compose exec opencode opencode pair --url http://opencode.localhost:8080"
 echo ""
 echo "afterwards: ./scripts/audit.sh   (what the guardrails blocked)"

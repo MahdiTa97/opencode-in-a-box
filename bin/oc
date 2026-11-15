@@ -6,7 +6,10 @@
 # terminals at once: no state, no locks, no files written.
 set -eu
 
-REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Follow symlinks (a README-recommended ~/.local/bin/oc link) and keep an
+# absolute path, because the sudo re-exec below happens after `cd`.
+SELF=$(readlink -f -- "$0" 2>/dev/null || printf '%s\n' "$0")
+REPO=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd)
 cd "$REPO"
 
 OC_URL=http://opencode.localhost:8080
@@ -57,19 +60,21 @@ need_docker() {
     exit 1
   fi
   printf 'oc: docker needs elevated rights here; re-running through sudo\n' >&2
-  OC_NO_SUDO=1 exec sudo -- "$0" "$cmd" "$@"
+  # sudo's env_reset would drop these, so pass them explicitly: without
+  # OC_NO_SUDO the child recurses forever if the daemon is still unreachable.
+  exec sudo -- env \
+    OC_NO_SUDO=1 \
+    "OC_VERBOSE=${OC_VERBOSE:-0}" \
+    "OC_FLOOR=${OC_FLOOR:-}" \
+    "$SELF" "$cmd" "$@"
 }
 
-load_env() {
-  [ -f .env ] || return 1
-  set -a
-  # shellcheck disable=SC1091
-  . ./.env
-  set +a
-  return 0
+policy_sha() {
+  [ -f policy/opencode.json ] || die "policy/opencode.json is missing"
+  sha=$(sha256sum policy/opencode.json | cut -d' ' -f1)
+  [ -n "$sha" ] || die "cannot compute the policy digest (sha256sum missing?)"
+  printf '%s\n' "$sha"
 }
-
-policy_sha() { sha256sum policy/opencode.json | cut -d' ' -f1; }
 
 cmd_up() {
   build=0
@@ -139,6 +144,8 @@ cmd_shell() {
 }
 
 cmd_logs() {
+  # Before the parse loop: the re-exec must carry -f/--since, not the leftovers.
+  need_docker "$@"
   follow=""
   since=""
   while [ "$#" -gt 0 ]; do
@@ -148,7 +155,6 @@ cmd_logs() {
       *) die "unknown option for logs: $1" ;;
     esac
   done
-  need_docker "$@"
   # shellcheck disable=SC2086
   run docker compose logs $follow $since opencode
 }
@@ -190,14 +196,16 @@ cmd_audit() {
 }
 
 cmd_config() {
-  load_env || die "no .env here — run ./setup.sh"
-  [ -n "${OPENCODE_PASSWORD:-}" ] || die "OPENCODE_PASSWORD is empty in .env"
-  [ "$OPENCODE_PASSWORD" != change-me ] || die "OPENCODE_PASSWORD is still 'change-me' in .env"
-  [ -n "${HOST_HOME:-}" ] || die "HOST_HOME is missing in .env"
-  [ -n "${PROJECTS_DIR:-}" ] || die "PROJECTS_DIR is missing in .env"
-  case $PROJECTS_DIR in
-    /) die "PROJECTS_DIR must not be / — that mounts the whole host" ;;
-  esac
+  # The rules live in scripts/check-env.sh, the same ones setup.sh enforces.
+  if out=$(sh scripts/check-env.sh all 2>&1); then
+    :
+  else
+    status=$?
+    case $status in
+      2) printf 'warning: %s\n' "$out" >&2 ;;
+      *) die "$out" ;;
+    esac
+  fi
   need_docker "$@"
   run docker compose config -q || exit 1
   printf 'configuration is valid\n'
@@ -208,41 +216,47 @@ warn() { printf 'WARN %s %s\n' "$1" "$2"; WARNED=$((WARNED + 1)); }
 fail() { printf 'FAIL %s %s\n' "$1" "$2"; FAILED=$((FAILED + 1)); }
 
 cmd_doctor() {
-  need_docker "$@"
+  # A machine without docker still gets the checks that do not need it.
+  have_docker=1
+  if ! docker info >/dev/null 2>&1; then
+    if [ "${OC_NO_SUDO:-0}" = 1 ]; then
+      have_docker=0
+    else
+      need_docker "$@"
+    fi
+  fi
 
   # 1. .env present, private, with a real password
   if [ ! -f .env ]; then
     fail 1 "no .env — run ./setup.sh"
   else
     mode=$(stat -c %a .env 2>/dev/null || echo "?")
-    if ! load_env; then
-      fail 1 ".env cannot be read"
-    elif [ -z "${OPENCODE_PASSWORD:-}" ] || [ "$OPENCODE_PASSWORD" = change-me ]; then
-      fail 1 "OPENCODE_PASSWORD is empty or still 'change-me'"
-    elif [ "$mode" != 600 ]; then
-      warn 1 ".env mode is $mode, expected 600"
+    if out=$(sh scripts/check-env.sh password 2>&1); then
+      if [ "$mode" = 600 ]; then
+        pass 1 ".env is present, private, with a password"
+      else
+        warn 1 ".env mode is $mode, expected 600"
+      fi
     else
-      pass 1 ".env is present, private, with a password"
+      fail 1 "$out"
     fi
   fi
 
-  # 2. the paths compose needs
-  if [ -z "${HOST_HOME:-}" ]; then
-    fail 2 "HOST_HOME is missing"
-  elif [ -z "${PROJECTS_DIR:-}" ]; then
-    fail 2 "PROJECTS_DIR is missing"
-  elif [ "$PROJECTS_DIR" = / ]; then
-    fail 2 "PROJECTS_DIR is / — that mounts the whole host"
-  elif [ "$PROJECTS_DIR" = "${HOME:-/nonexistent}" ]; then
-    fail 2 "PROJECTS_DIR is \$HOME — use a child directory"
-  elif [ ! -d "$PROJECTS_DIR" ]; then
-    warn 2 "PROJECTS_DIR ($PROJECTS_DIR) does not exist yet"
+  # 2. the paths compose needs (rules shared with setup.sh and oc config)
+  if out=$(sh scripts/check-env.sh paths 2>&1); then
+    pass 2 "paths are set and the project root exists"
   else
-    pass 2 "paths are set and $PROJECTS_DIR exists"
+    status=$?
+    case $status in
+      2) warn 2 "$out" ;;
+      *) fail 2 "$out" ;;
+    esac
   fi
 
   # 3. the compose file parses with this environment
-  if docker compose config -q >/dev/null 2>&1; then
+  if [ "$have_docker" = 0 ]; then
+    warn 3 "docker daemon unreachable; cannot parse the compose file"
+  elif docker compose config -q >/dev/null 2>&1; then
     pass 3 "compose configuration is valid"
   else
     fail 3 "compose configuration is invalid (run: oc config)"
@@ -250,19 +264,33 @@ cmd_doctor() {
 
   # 4. the image is not older than the files baked into it
   image=opencode-docker-opencode:local
-  newest=$(git log -1 --format=%ct -- Dockerfile overlay.mjs entrypoint.sh commands policy seccomp bin 2>/dev/null || true)
-  built=$(docker image inspect -f '{{.Created}}' "$image" 2>/dev/null || true)
-  if [ -z "$built" ]; then
+  # safe.directory: this often runs as root in a user-owned checkout, where git
+  # otherwise refuses and the check would silently degrade to a warning.
+  newest=$(git -c "safe.directory=$REPO" log -1 --format=%ct -- \
+    Dockerfile overlay.mjs entrypoint.sh commands policy seccomp bin 2>/dev/null) || newest=""
+  if [ "$have_docker" = 0 ]; then
+    built=""
+  else
+    built=$(docker image inspect -f '{{.Created}}' "$image" 2>/dev/null || true)
+  fi
+  if [ "$have_docker" = 0 ]; then
+    warn 4 "docker daemon unreachable; cannot date the image"
+  elif [ -z "$built" ]; then
     warn 4 "image $image not built yet (oc up --build)"
   elif [ -z "$newest" ]; then
-    warn 4 "no git history to compare the image against"
+    warn 4 "cannot read git history here (dubious ownership?); image age unverified"
   else
-    built_epoch=$(date -d "$built" +%s 2>/dev/null || echo 0)
-    if [ "$built_epoch" -lt "$newest" ]; then
-      fail 4 "image is older than the last change to the build inputs (oc up --build)"
-    else
-      pass 4 "image is newer than the build inputs"
-    fi
+    built_epoch=$(date -d "$built" +%s 2>/dev/null || true)
+    case ${built_epoch:-x}$newest in
+      *[!0-9]*) warn 4 "cannot compare dates (built='$built'); image age unverified" ;;
+      *)
+        if [ "$built_epoch" -lt "$newest" ]; then
+          fail 4 "image is older than the last change to the build inputs (oc up --build)"
+        else
+          pass 4 "image is newer than the build inputs"
+        fi
+        ;;
+    esac
   fi
 
   # 5. the seccomp profile matches its generator
@@ -277,8 +305,11 @@ cmd_doctor() {
   fi
 
   # 6. the policy baked into the image is the policy in this tree
-  label=$(docker image inspect -f '{{index .Config.Labels "org.opencode-docker.policy-sha"}}' "$image" 2>/dev/null || true)
-  if [ -z "$built" ]; then
+  label=""
+  [ "$have_docker" = 0 ] || label=$(docker image inspect -f '{{index .Config.Labels "org.opencode-docker.policy-sha"}}' "$image" 2>/dev/null || true)
+  if [ "$have_docker" = 0 ]; then
+    warn 6 "docker daemon unreachable; cannot read the image label"
+  elif [ -z "$built" ]; then
     warn 6 "no image to check (oc up --build)"
   elif [ -z "$label" ] || [ "$label" = "<no value>" ]; then
     warn 6 "image predates the policy label (oc up --build)"
@@ -289,32 +320,43 @@ cmd_doctor() {
   fi
 
   # 7. the server is healthy and the front door requires a password
-  state=$(docker compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null || true)
-  if ! printf '%s\n' "$state" | grep -q '^opencode healthy'; then
+  # The nginx front door asks for nothing; the 401 comes from the app, and only
+  # for an unauthenticated request. With credentials it answers 200.
+  state=""
+  [ "$have_docker" = 0 ] || state=$(docker compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null || true)
+  if [ "$have_docker" = 0 ]; then
+    warn 7 "docker daemon unreachable; cannot check the front door"
+  elif ! printf '%s\n' "$state" | grep -q '^opencode healthy'; then
     fail 7 "the opencode service is not healthy (oc status)"
   else
-    code4=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -u "opencode:${OPENCODE_PASSWORD:-}" http://127.0.0.1:8080/api/info || true)
-    code6=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -u "opencode:${OPENCODE_PASSWORD:-}" "http://[::1]:8080/api/info" || true)
+    code4=$(curl -g -s -o /dev/null -w '%{http_code}' --max-time 3 "$OC_URL/api/info" || true)
+    code6=$(curl -g -s -o /dev/null -w '%{http_code}' --max-time 3 "http://[::1]:8080/api/info" || true)
     if [ "$code4" != 401 ]; then
-      fail 7 "nginx answered $code4 on 127.0.0.1:8080 (expected 401 until paired)"
+      fail 7 "nginx answered $code4 on 127.0.0.1:8080 (expected 401 without credentials)"
     elif [ "$code6" = 000 ]; then
       warn 7 "healthy, but [::1]:8080 is unreachable (host without IPv6?)"
+    elif [ "$code6" != 401 ]; then
+      fail 7 "nginx answered $code6 on [::1]:8080 (expected 401 without credentials)"
     else
       pass 7 "service healthy; both loopback addresses answer 401"
     fi
   fi
 
   # 8. the host's root-owned floor agrees with this tree
+  # Compare canonical content, not just the number of statements: a swapped
+  # deny/allow keeps the count and changes the security.
   floor=${OC_FLOOR:-/etc/opencode/opencode.json}
-  if [ ! -r "$floor" ]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    warn 8 "jq is not installed; cannot compare $floor"
+  elif [ ! -r "$floor" ]; then
     warn 8 "no host floor at $floor (the container floor still applies)"
   else
-    repo_n=$(jq '.policies | length' policy/opencode.json 2>/dev/null || echo "?")
-    host_n=$(jq '.policies | length' "$floor" 2>/dev/null || echo "?")
-    if [ "$repo_n" = "$host_n" ]; then
-      pass 8 "host floor has the same $repo_n policies"
+    repo_h=$(jq -S . policy/opencode.json 2>/dev/null | sha256sum | cut -d' ' -f1)
+    host_h=$(jq -S . "$floor" 2>/dev/null | sha256sum | cut -d' ' -f1)
+    if [ -n "$repo_h" ] && [ "$repo_h" = "$host_h" ]; then
+      pass 8 "host floor matches this tree ($(jq '.policies | length' policy/opencode.json) policies)"
     else
-      fail 8 "host floor has $host_n policies, this tree has $repo_n: sudo install -m 644 -o root -g root policy/opencode.json $floor"
+      fail 8 "host floor differs from policy/opencode.json (counts: $(jq '.policies|length' "$floor" 2>/dev/null || echo ?) vs $(jq '.policies|length' policy/opencode.json 2>/dev/null || echo ?)): sudo install -m 644 -o root -g root policy/opencode.json $floor"
     fi
   fi
 

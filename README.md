@@ -81,9 +81,8 @@ alias ocd='sudo docker compose -f ~/opencode-docker/docker-compose.yml'
 ## Start
 
 ```bash
-sudo docker compose build
-sudo docker compose up -d
-sudo docker compose ps
+./bin/oc up --build    # builds with the policy digest label, waits for health
+./bin/oc status
 ```
 
 ## Connect
@@ -348,7 +347,8 @@ sudo docker compose down -v              # destroy sessions, snapshots and cache
 Upgrade: edit the pinned `@opencode/cli@2.3.0` in the `Dockerfile`, then
 
 ```bash
-sudo docker compose build && sudo docker compose up -d --force-recreate
+./bin/oc up --build
+./bin/oc doctor
 ```
 
 `overlay.mjs` and `entrypoint.sh` are copied **into the image**, so editing them
@@ -388,7 +388,7 @@ container keeps enforcing the old rules:
 
 ```bash
 cp /etc/opencode/opencode.json policy/opencode.json
-sudo docker compose build && sudo docker compose up -d
+./bin/oc up --build
 ```
 
 The host config directory is mounted read-only at `/home/dev/host-config`, never
@@ -479,7 +479,7 @@ would rewrite a config that is regenerated on every start, so the key goes in
 
 ```bash
 printf 'CONTEXT7_API_KEY=%s\n' 'YOUR_KEY' >> .env
-sudo docker compose build && sudo docker compose up -d --force-recreate
+./bin/oc up --build
 docker logs opencode-docker-opencode-1 2>&1 | grep 'context7 will use'
 ```
 
