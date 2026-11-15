@@ -160,7 +160,8 @@ cmd_logs() {
 }
 
 cmd_backup() {
-  need_docker "$@"
+  # No need_docker here: the script calls `sudo docker` itself, and re-running
+  # oc as root would leave the archive owned by root.
   run sh scripts/backup.sh "$@"
 }
 
@@ -181,7 +182,6 @@ cmd_restore() {
     printf 'oc: restoring overwrites the oc-data volume (sessions, credentials, snapshots).\n    Re-run with --yes if that is what you want.\n' >&2
     exit 1
   fi
-  need_docker "$@"
   if [ "$check" = 1 ]; then
     run sh scripts/restore.sh --check "$archive"
   else
@@ -191,7 +191,6 @@ cmd_restore() {
 
 cmd_audit() {
   [ "$#" -le 1 ] || die "audit takes at most one window, e.g. oc audit 7d"
-  need_docker "$@"
   run sh scripts/audit.sh "${1:-24h}"
 }
 
