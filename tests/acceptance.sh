@@ -119,6 +119,12 @@ docker compose exec -T opencode sh -c 'touch "${HOME}/.config/.acceptance-rw"' >
   && ok "18b: the config dir is writable" || bad "18b: the config dir is not writable"
 docker compose exec -T opencode sh -c 'rm -f "${HOME}/.config/.acceptance-rw"; touch "${HOME}/.local/state/.acceptance-rw"' >/dev/null 2>&1 \
   && ok "18c: the state dir is writable" || bad "18c: the state dir is not writable"
+# The server signs sessions with a secret kept here. On tmpfs it disappeared at
+# every recreate and the desktop app silently lost its pairing.
+state_type="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/home/dev/.local/state"}}{{.Type}}{{end}}{{end}}' "$(docker compose ps -q opencode)" 2>/dev/null)"
+[ "$state_type" = "volume" ] \
+  && ok "18d: the state dir is a volume (pairing survives recreate)" \
+  || bad "18d: the state dir is '$state_type', not a volume"
 
 # 19. both images are pinned by digest, not by a movable tag
 node_ref="$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile | tail -1)"

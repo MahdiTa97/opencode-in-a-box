@@ -250,6 +250,22 @@ sudo docker compose exec opencode opencode pair --url http://opencode.localhost:
 Paste the printed link into the app's server address field. With the stale
 `service.json` gone, any future fallback binds loopback only.
 
+Why it happened: the server signs sessions with a secret it keeps in
+`~/.local/state`. That path used to be a tmpfs, so every `--force-recreate`
+wiped the secret and the app's stored pairing became invalid. It is now the
+named volume `oc-state`, so a restart or upgrade keeps the pairing. Deleting
+that volume (`docker compose down -v`) signs the app out; pair once more.
+
+A pairing link is single use and expires after five minutes. Opening a used
+one in a browser returns `Authentication required`, which is not an error in
+the app. Mint a fresh one:
+
+```bash
+cd ~/opencode-docker
+curl -s -X POST -u "opencode:$(grep '^OPENCODE_PASSWORD=' .env | cut -d= -f2-)" \
+  http://opencode.localhost:8080/api/pair | jq -r '.code'
+```
+
 ## Logs, stop, destroy, upgrade
 
 ```bash
@@ -261,7 +277,7 @@ sudo docker compose down -v              # destroy sessions, snapshots and cache
 Upgrade: edit the pinned `@opencode/cli@2.3.0` in the `Dockerfile`, then
 
 ```bash
-sudo docker compose build --pull && sudo docker compose up -d --force-recreate
+sudo docker compose build && sudo docker compose up -d --force-recreate
 ```
 
 `overlay.mjs` and `entrypoint.sh` are copied **into the image**, so editing them

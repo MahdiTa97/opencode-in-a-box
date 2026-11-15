@@ -11,13 +11,14 @@ services:
     image: opencode-docker-opencode:local
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]
-    command: ["chown -R ${HOST_UID:-1000}:${HOST_GID:-1000} /data /cache"]
+    command: ["chown -R ${HOST_UID:-1000}:${HOST_GID:-1000} /data /cache /state"]
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "DAC_OVERRIDE"]
     security_opt: ["no-new-privileges:true"]
     volumes:
       - oc-data:/data
       - oc-cache:/cache
+      - oc-state:/state
     restart: "no"
     logging:
       driver: json-file
@@ -44,7 +45,6 @@ services:
       # uid/gid matter: a tmpfs mounts root-owned, and the service runs as dev,
       # so without them the entrypoint cannot create anything under ~/.config.
       - /home/dev/.config:rw,noexec,nosuid,size=16m,uid=${HOST_UID:-1000},gid=${HOST_GID:-1000},mode=0755
-      - /home/dev/.local/state:rw,noexec,nosuid,size=16m,uid=${HOST_UID:-1000},gid=${HOST_GID:-1000},mode=0755
     pids_limit: 1024
     mem_limit: 4g
     depends_on:
@@ -64,6 +64,9 @@ services:
       - ${PROJECTS_DIR:?PROJECTS_DIR is not set - run ./setup.sh}:/work
       - oc-data:/home/dev/.local/share/opencode
       - oc-cache:/home/dev/.cache/opencode
+      # Sessions are signed with a secret the server keeps here. On tmpfs it
+      # vanished at every recreate and the desktop app lost its pairing.
+      - oc-state:/home/dev/.local/state
     restart: unless-stopped
     stop_grace_period: 30s
     environment:
@@ -119,3 +122,4 @@ networks:
 volumes:
   oc-data:
   oc-cache:
+  oc-state:
