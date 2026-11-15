@@ -417,7 +417,7 @@ calls fail, set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` in `.env` (see
 ## Policy layer
 
 The image bakes `policy/opencode.json` to `/etc/opencode/opencode.json`
-(root-owned, read-only, 48 statements). **After changing the host's
+(root-owned, read-only, 53 statements). **After changing the host's
 `/etc/opencode/opencode.json`, re-copy it into `policy/` and rebuild**, or the
 container keeps enforcing the old rules:
 
@@ -431,6 +431,27 @@ as the container's global config directory: `OPENCODE_CONFIG` only overrides the
 keys it defines, so a global config placed there would leak `browse` and
 credential-less providers into the running server. The overlay is regenerated
 from the host files at every start and served to the server as an extra layer.
+
+### Only you can change the rules
+
+Config layers are additive, so a writable config file is a way to widen
+`permissions` without touching the policy floor. The floor closes the three
+places inside the container where an agent could otherwise write one:
+
+| path | why it matters |
+|---|---|
+| `~/.config/opencode/*` | the server reads `opencode.json(c)` from here |
+| `~/.cache/opencode/*` | the generated overlay lives here and is hot-reloaded |
+| `/work/**/opencode.json`, `/work/**/.opencode/opencode.json` | project config merges over the global one |
+
+`policies` cannot be loosened from any of them — the `/etc` layer is evaluated
+last and a `deny` there is final — but `permissions` could be widened where no
+policy speaks. Blocks are on `edit` plus `>` and `tee` for the cache, and on
+`edit` for the project files. Editing a project's `opencode.json` by hand is
+unaffected; only the agent is refused.
+
+If a project genuinely needs the agent to edit its `opencode.json`, append an
+`allow` for that one path *after* the deny in `policy/opencode.json`, and rebuild.
 
 ## What was blocked
 

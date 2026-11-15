@@ -239,6 +239,31 @@
       "action": "tool.use",
       "resource": "external_directory:*/.gnupg*",
       "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "edit:*.cache/opencode/*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:*>.cache/opencode/*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "shell:tee */.cache/opencode/*",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "edit:*/.opencode/opencode.json",
+      "effect": "deny"
+    },
+    {
+      "action": "tool.use",
+      "resource": "edit:*/opencode.json",
+      "effect": "deny"
     }
   ]
 }

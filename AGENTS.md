@@ -77,6 +77,13 @@ from it at every start.
 - **Two policy layers.** The image bakes `/etc/opencode/opencode.json`; the host
   may also have one. Broader configuration is evaluated later and wins, so a
   project cannot re-enable what the floor denies.
+- **The floor also closes the writable config layers.** Config files merge, so an
+  agent that can write one can widen `permissions`. The policy denies `edit` on
+  `~/.config/opencode/*`, on `~/.cache/opencode/*` (the generated overlay, which
+  is hot-reloaded), and on `/work/**/opencode.json` and
+  `/work/**/.opencode/opencode.json`, plus `>` and `tee` into the cache. Do not
+  weaken these to make a project "just work"; append a narrow `allow` for one
+  path instead.
 - **Seccomp is generated, never hand-edited.** `scripts/gen-seccomp.mjs` strips
   57 names out of Docker's default allowlist and appends one `ERRNO` rule.
   `node scripts/gen-seccomp.mjs --check` must stay green.
