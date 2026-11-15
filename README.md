@@ -570,6 +570,27 @@ sudo bash tests/acceptance.sh
 The scripts run inside the project's own image, so they need no extra pull.
 `backups/` is git-ignored.
 
+### Weekly maintenance
+
+`scripts/maintenance.sh` runs the checks that only matter over time: a fresh
+backup, a readability check of it, `oc doctor`, `oc audit 7d`, and the pinned
+version report. It never builds, starts or restores anything.
+
+```bash
+./scripts/maintenance.sh --dry-run    # print the steps, run nothing
+sudo ./scripts/install-timer.sh       # weekly systemd timer, runs as root
+sudo ./scripts/install-timer.sh --show   # see the generated units first
+systemctl list-timers oc-maintenance.timer
+journalctl -u oc-maintenance.service -n 40
+```
+
+The failure this catches: a backup that has been silently failing for weeks, or
+an image that drifted away from `policy/` because somebody rebuilt without
+`./bin/oc up --build`. It runs as root because the docker socket is root-only;
+the archive itself is still written by the service user, so it stays yours.
+
+`sudo ./scripts/install-timer.sh --remove` takes it away.
+
 ## Log growth
 
 Every service has a `json-file` log limit (`max-size`, `max-file`), so a long

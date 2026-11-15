@@ -62,6 +62,7 @@ from it at every start.
 | Health of the installation | `./bin/oc doctor` (add `--json` for machines) |
 | End-to-end checks | `sudo bash tests/acceptance.sh` (human) |
 | What the guardrails blocked | `./bin/oc audit 24h` |
+| Weekly health (backup + doctor + audit + pins) | `./scripts/maintenance.sh --dry-run` (the timer runs it as root) |
 | Backup / verify | `./bin/oc backup` · `./bin/oc restore --check backups/<file>` |
 
 ## Invariants worth knowing before you change anything
