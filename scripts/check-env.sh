@@ -12,43 +12,61 @@ cd "$REPO"
 
 [ -f .env ] || { printf 'no .env — run ./setup.sh\n'; exit 1; }
 
-# `sh` cannot parse an unquoted value with spaces, and compose can. Say so
-# instead of reporting the variable as missing.
-if ! ( set -a; . ./.env ) 2>/dev/null; then
-  printf '.env has a line sh cannot parse; quote values that contain spaces\n'
-  exit 1
-fi
-set -a
-# shellcheck disable=SC1091
-. ./.env
-set +a
+# Read one value without sourcing the file: compose accepts `KEY=my dir`, and
+# `sh` would treat that as a command. Quoted values are unquoted here.
+env_get() {
+  value=$(awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' .env)
+  case $value in
+    \"*\") value=${value#\"}; value=${value%\"} ;;
+    \'*\') value=${value#\'}; value=${value%\'} ;;
+  esac
+  printf '%s\n' "$value"
+}
+
+env_has() {
+  grep -q "^$1=" .env
+}
 
 check_password() {
-  [ -n "${OPENCODE_PASSWORD:-}" ] || { printf 'OPENCODE_PASSWORD is empty in .env\n'; exit 1; }
-  [ "$OPENCODE_PASSWORD" != change-me ] || { printf "OPENCODE_PASSWORD is still 'change-me' in .env\n"; exit 1; }
+  env_has OPENCODE_PASSWORD || { printf 'OPENCODE_PASSWORD is missing in .env\n'; exit 1; }
+  password=$(env_get OPENCODE_PASSWORD)
+  [ -n "$password" ] || { printf 'OPENCODE_PASSWORD is empty in .env\n'; exit 1; }
+  [ "$password" != change-me ] || { printf "OPENCODE_PASSWORD is still 'change-me' in .env\n"; exit 1; }
   return 0
 }
 
 check_paths() {
-  [ -n "${HOST_HOME:-}" ] || { printf 'HOST_HOME is missing in .env\n'; exit 1; }
-  [ -n "${PROJECTS_DIR:-}" ] || { printf 'PROJECTS_DIR is missing in .env\n'; exit 1; }
-  case $PROJECTS_DIR in
+  env_has HOST_HOME || { printf 'HOST_HOME is missing in .env\n'; exit 1; }
+  host_home=$(env_get HOST_HOME)
+  [ -n "$host_home" ] || { printf 'HOST_HOME is empty in .env\n'; exit 1; }
+
+  env_has PROJECTS_DIR || { printf 'PROJECTS_DIR is missing in .env\n'; exit 1; }
+  projects=$(env_get PROJECTS_DIR)
+  [ -n "$projects" ] || { printf 'PROJECTS_DIR is empty in .env\n'; exit 1; }
+
+  case $projects in
     /*) ;;
-    *) printf "PROJECTS_DIR must be an absolute path (got '%s')\n" "$PROJECTS_DIR"; exit 1 ;;
+    *) printf "PROJECTS_DIR must be an absolute path (got '%s')\n" "$projects"; exit 1 ;;
   esac
-  [ "$PROJECTS_DIR" != / ] || { printf 'PROJECTS_DIR must not be / — that mounts the whole host\n'; exit 1; }
-  [ "$PROJECTS_DIR" != "$HOST_HOME" ] || { printf 'PROJECTS_DIR is HOST_HOME itself; use a child directory\n'; exit 1; }
-  if [ ! -d "$PROJECTS_DIR" ]; then
-    printf 'PROJECTS_DIR (%s) does not exist yet\n' "$PROJECTS_DIR"
+  [ "$projects" != / ] || { printf 'PROJECTS_DIR must not be / — that mounts the whole host\n'; exit 1; }
+  [ "$projects" != "$host_home" ] || { printf 'PROJECTS_DIR is HOST_HOME itself; use a child directory\n'; exit 1; }
+  # `sudo oc` would otherwise check root's home, not the one compose mounts.
+  [ "$projects" != "/root" ] || { printf 'PROJECTS_DIR must not be /root\n'; exit 1; }
+  if [ ! -d "$projects" ]; then
+    printf 'PROJECTS_DIR (%s) does not exist yet\n' "$projects"
     exit 2
   fi
-  [ -w "$PROJECTS_DIR" ] || { printf 'PROJECTS_DIR (%s) is not writable by %s\n' "$PROJECTS_DIR" "$(id -un)"; exit 1; }
+  [ -w "$projects" ] || {
+    printf 'PROJECTS_DIR (%s) is not writable by %s\n' "$projects" "$(id -un)"
+    exit 1
+  }
   return 0
 }
 
 case ${1:-all} in
   password) check_password ;;
   paths) check_paths ;;
+  get) env_get "${2:?usage: check-env.sh get NAME}" ;;
   all)
     check_password
     status=0
@@ -56,7 +74,7 @@ case ${1:-all} in
     exit "$status"
     ;;
   *)
-    printf 'usage: check-env.sh [password|paths|all]\n' >&2
+    printf 'usage: check-env.sh [password|paths|all|get NAME]\n' >&2
     exit 1
     ;;
 esac

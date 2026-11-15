@@ -166,8 +166,14 @@ test("up is idempotent", () => {
   const second = oc(["up"], { repo });
   assert.equal(first.code, 0);
   assert.equal(second.code, 0);
-  assert.ok(hasCall(second.calls, "docker", "compose", "up", "-d", "--wait", "--wait-timeout", "90"));
-  assert.doesNotMatch(second.calls, /--force-recreate/);
+  // Both invocations ran the same converge command, and neither recreated
+  // containers that were already current.
+  for (const run of [first, second]) {
+    assert.ok(hasCall(run.calls, "docker", "compose", "up", "-d", "--wait", "--wait-timeout", "90"));
+    assert.equal(run.calls.split("A up\n").length - 1, 1);
+    assert.doesNotMatch(run.calls, /--force-recreate/);
+    assert.doesNotMatch(run.calls, /A down/);
+  }
 });
 
 test("down refuses --volumes without --yes, and touches nothing", () => {
@@ -381,4 +387,39 @@ test("doctor still reports the offline checks when docker is unreachable", () =>
   assert.match(r.stdout, /WARN 7 docker daemon unreachable/, r.stdout);
   assert.doesNotMatch(r.stdout, /FAIL /, r.stdout);
   assert.equal(r.code, 0, r.stdout);
+});
+
+test("commands without options reject stray arguments", () => {
+  for (const cmd of ["restart", "status", "pair", "version"]) {
+    const r = oc([cmd, "typo"]);
+    assert.equal(r.code, 1, `${cmd} must reject arguments`);
+    assert.match(r.stderr, /takes no arguments/);
+    assert.doesNotMatch(r.calls, /CALL docker/);
+  }
+});
+
+test("restore accepts exactly one archive", () => {
+  const r = oc(["restore", "a.tar.gz", "b.tar.gz", "--yes"]);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /one archive/);
+  assert.doesNotMatch(r.calls, /CALL sh/);
+});
+
+test("logs keeps a window that contains spaces as one argument", () => {
+  const repo = makeRepo({ scripts: {} });
+  const r = oc(["logs", "--since", "2 hours"], { repo, env: { SHIM_DOCKER_INFO_EXIT: "0" } });
+  assert.equal(r.code, 0);
+  assert.match(r.calls, /CALL docker\n(?:A [^\n]*\n)*A --since\nA 2 hours\nA opencode\n/);
+});
+
+test(".env values with spaces are accepted, not reported as missing", () => {
+  const repo = makeRepo({
+    env: "OPENCODE_PASSWORD=secret123\nHOST_HOME=/home/x\nPROJECTS_DIR=/tmp/oc with space\n",
+  });
+  mkdirSync("/tmp/oc with space", { recursive: true });
+  const res = spawnSync("sh", [path.join(repo, "scripts", "check-env.sh"), "paths"], {
+    cwd: repo,
+    encoding: "utf8",
+  });
+  assert.equal(res.status, 0, res.stdout);
 });

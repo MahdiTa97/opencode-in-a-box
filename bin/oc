@@ -46,6 +46,11 @@ EOF
 
 die() { printf 'oc: %s\n' "$*" >&2; exit 1; }
 
+# Commands with no options would otherwise ignore a typo silently.
+no_args() {
+  [ "$#" -eq 0 ] || die "$cmd takes no arguments (got: $1)"
+}
+
 run() {
   [ "${OC_VERBOSE:-0}" = 1 ] && printf '+ %s\n' "$*" >&2
   "$@"
@@ -117,6 +122,7 @@ cmd_down() {
 }
 
 cmd_restart() {
+  no_args "$@"
   # Recreate rather than `restart`: nginx caches the upstream address, and the
   # healthcheck reads the password once at start.
   need_docker "$@"
@@ -125,12 +131,14 @@ cmd_restart() {
 }
 
 cmd_status() {
-  need_docker "$@"
+  no_args "$@"
+  need_docker
   run docker compose ps
 }
 
 cmd_pair() {
-  need_docker "$@"
+  no_args "$@"
+  need_docker
   run docker compose exec -T opencode opencode pair --url "$OC_URL"
 }
 
@@ -146,17 +154,26 @@ cmd_shell() {
 cmd_logs() {
   # Before the parse loop: the re-exec must carry -f/--since, not the leftovers.
   need_docker "$@"
-  follow=""
+  follow=0
   since=""
   while [ "$#" -gt 0 ]; do
     case $1 in
-      -f|--follow) follow="-f"; shift ;;
-      --since) [ "$#" -ge 2 ] || die "--since needs a value"; since="--since $2"; shift 2 ;;
+      -f|--follow) follow=1; shift ;;
+      --since) [ "$#" -ge 2 ] || die "--since needs a value"; since=$2; shift 2 ;;
       *) die "unknown option for logs: $1" ;;
     esac
   done
-  # shellcheck disable=SC2086
-  run docker compose logs $follow $since opencode
+  # Four cases rather than a joined option string: `--since "2 hours"` is one
+  # argument, and word splitting would turn it into two.
+  if [ "$follow" = 1 ] && [ -n "$since" ]; then
+    run docker compose logs -f --since "$since" opencode
+  elif [ "$follow" = 1 ]; then
+    run docker compose logs -f opencode
+  elif [ -n "$since" ]; then
+    run docker compose logs --since "$since" opencode
+  else
+    run docker compose logs opencode
+  fi
 }
 
 cmd_backup() {
@@ -169,12 +186,17 @@ cmd_restore() {
   check=0
   yes=0
   archive=""
+  archives=0
   for a in "$@"; do
     case $a in
       --check) check=1 ;;
       --yes) yes=1 ;;
       -*) die "unknown option for restore: $a" ;;
-      *) archive=$a ;;
+      *)
+        archives=$((archives + 1))
+        [ "$archives" -eq 1 ] || die "restore takes one archive (got: $archive and $a)"
+        archive=$a
+        ;;
     esac
   done
   [ -n "$archive" ] || die "restore needs an archive: oc restore --check FILE"
@@ -266,7 +288,7 @@ cmd_doctor() {
   # safe.directory: this often runs as root in a user-owned checkout, where git
   # otherwise refuses and the check would silently degrade to a warning.
   newest=$(git -c "safe.directory=$REPO" log -1 --format=%ct -- \
-    Dockerfile overlay.mjs entrypoint.sh commands policy seccomp bin 2>/dev/null) || newest=""
+    Dockerfile overlay.mjs entrypoint.sh commands policy seccomp 2>/dev/null) || newest=""
   if [ "$have_docker" = 0 ]; then
     built=""
   else
@@ -280,10 +302,14 @@ cmd_doctor() {
     warn 4 "cannot read git history here (dubious ownership?); image age unverified"
   else
     built_epoch=$(date -d "$built" +%s 2>/dev/null || true)
-    case ${built_epoch:-x}$newest in
+    # Both sides must be a plain integer; anything else is "cannot compare",
+    # never an epoch-0 image that fails or a silently passing `-lt`.
+    case $built_epoch in ''|*[!0-9]*) built_epoch="" ;; esac
+    case $newest in ''|*[!0-9]*) newest_num="" ;; *) newest_num=$newest ;; esac
+    case ${built_epoch:-x}$newest_num in
       *[!0-9]*) warn 4 "cannot compare dates (built='$built'); image age unverified" ;;
       *)
-        if [ "$built_epoch" -lt "$newest" ]; then
+        if [ "$built_epoch" -lt "$newest_num" ]; then
           fail 4 "image is older than the last change to the build inputs (oc up --build)"
         else
           pass 4 "image is newer than the build inputs"
@@ -364,6 +390,7 @@ cmd_doctor() {
 }
 
 cmd_version() {
+  no_args "$@"
   printf 'oc %s\n' "$(git describe --tags --always 2>/dev/null || echo unknown)"
   printf 'repo %s\n' "$REPO"
   printf 'compose %s\n' "$(docker compose version --short 2>/dev/null || echo unavailable)"
