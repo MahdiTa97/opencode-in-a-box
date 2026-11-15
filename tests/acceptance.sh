@@ -115,6 +115,8 @@ docker compose exec -T opencode sh -c 'touch /.acceptance-ro' >/dev/null 2>&1 \
   && bad "18a: the root filesystem is writable" || ok "18a: root filesystem is read-only"
 docker compose exec -T opencode sh -c 'touch "${HOME}/.config/.acceptance-rw"' >/dev/null 2>&1 \
   && ok "18b: the config dir is writable" || bad "18b: the config dir is not writable"
+docker compose exec -T opencode sh -c 'rm -f "${HOME}/.config/.acceptance-rw"; touch "${HOME}/.local/state/.acceptance-rw"' >/dev/null 2>&1 \
+  && ok "18c: the state dir is writable" || bad "18c: the state dir is not writable"
 
 # 19. both images are pinned by digest, not by a movable tag
 node_ref="$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile | tail -1)"

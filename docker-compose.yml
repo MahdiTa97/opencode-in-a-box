@@ -39,10 +39,12 @@ services:
       # Regenerate with: node scripts/gen-seccomp.mjs
       - seccomp=./seccomp/opencode.json
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=512m
+      - /tmp:rw,noexec,nosuid,size=512m,mode=1777
       # Rebuilt from the host config at every start; nothing needs to persist.
-      - /home/dev/.config:rw,noexec,nosuid,size=16m
-      - /home/dev/.local/state:rw,noexec,nosuid,size=16m
+      # uid/gid matter: a tmpfs mounts root-owned, and the service runs as dev,
+      # so without them the entrypoint cannot create anything under ~/.config.
+      - /home/dev/.config:rw,noexec,nosuid,size=16m,uid=${HOST_UID:-1000},gid=${HOST_GID:-1000},mode=0755
+      - /home/dev/.local/state:rw,noexec,nosuid,size=16m,uid=${HOST_UID:-1000},gid=${HOST_GID:-1000},mode=0755
     pids_limit: 1024
     mem_limit: 4g
     depends_on:
