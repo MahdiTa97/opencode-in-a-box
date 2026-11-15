@@ -14,11 +14,15 @@ RUN apt-get update \
       git ripgrep curl ca-certificates jq python3 openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
-# Pinned: upgrading OpenCode is an explicit edit of this line.
+# Pinning policy (see README, Toolchain):
+#   - @opencode/cli and @upstash/context7-mcp: exact. A major bump can change the
+#     config schema or the plugin API, which would silently weaken the policy floor.
+#   - pnpm: caret. Minor and patch releases are safe for lockfiles, majors are not.
+#   - yarn: 1.22.22 is the final classic release; nothing will be published after it.
 # The base image ships corepack shims at /usr/local/bin/{yarn,yarnpkg,pnpm,pnpx};
 # npm refuses to overwrite them, so drop them first and install real versions.
 RUN rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/pnpm /usr/local/bin/pnpx \
- && npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp@4.7.0 pnpm@12.18.0 yarn@1.22.22 \
+ && npm install -g @opencode/cli@2.3.0 @upstash/context7-mcp@4.7.0 "pnpm@^12.18.0" yarn@1.22.22 \
  && npm cache clean --force
 
 # Optional browser for e2e tests. Browsers live outside $HOME so a volume mount

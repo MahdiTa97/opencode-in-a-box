@@ -84,6 +84,30 @@ container, but native addons are **not** interchangeable if the host runs a
 different Node major. If something fails with `NODE_MODULE_VERSION`, run
 `pnpm rebuild` (or delete `node_modules`) inside the container.
 
+### Version policy
+
+Nothing is on `latest`. A `latest` build takes whatever exists that day, so the
+image stops being reproducible and a silent upstream change can weaken what the
+acceptance tests check. Strictness is split by blast radius:
+
+| package | pin | why |
+|---------|-----|-----|
+| `@opencode/cli` | exact (`2.3.0`) | a major bump has changed the config schema and the plugin API before; that is the policy floor |
+| `@upstash/context7-mcp` | exact (`4.7.0`) | a protocol change kills MCP silently |
+| `pnpm` | caret (`^12.18.0`) | minor/patch releases stay lockfile-compatible |
+| `yarn` | exact (`1.22.22`) | final classic release; nothing newer will ship |
+| base image | tag (`node:24-bookworm-slim`) | floats within 24.x; pin a digest if you want it frozen |
+
+Check where you stand before deciding anything:
+
+```bash
+./scripts/check-updates.sh
+```
+
+It prints pinned vs latest for every tool and flags a major jump. To upgrade,
+edit the one line in the `Dockerfile`, rebuild, then re-run
+`sudo bash tests/acceptance.sh`: the tests are what tell you the bump was safe.
+
 ### Browser for e2e tests
 
 Chromium is **off by default** because it adds ~1.2 GB. When you need
