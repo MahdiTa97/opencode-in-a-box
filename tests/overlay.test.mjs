@@ -120,3 +120,31 @@ test("leaves the MCP environment untouched when no Context7 key is configured", 
   });
   assert.equal(config.mcp.servers.context7.environment, undefined);
 });
+
+test("pins new worktrees inside the mounted project tree", () => {
+  const { config } = buildConfig([JSONC], { context7Command: CTX7 });
+  assert.deepEqual(config.worktree, { directory: "/work/.worktrees" });
+});
+
+test("keeps a worktree directory the host config already sets", () => {
+  const { config } = buildConfig(
+    [JSONC, '{ "worktree": { "directory": "/work/custom-trees" } }'],
+    { context7Command: CTX7 },
+  );
+  assert.deepEqual(config.worktree, { directory: "/work/custom-trees" });
+});
+
+test("fills in the directory when the host config sets worktree without one", () => {
+  const { config } = buildConfig([JSONC, '{ "worktree": {} }'], { context7Command: CTX7 });
+  assert.deepEqual(config.worktree, { directory: "/work/.worktrees" });
+});
+
+test("warns when the worktree directory sits outside the mounted tree", () => {
+  const warnings = [];
+  buildConfig([JSONC, '{ "worktree": { "directory": "/srv/trees" } }'], {
+    context7Command: CTX7,
+    warn: (message) => warnings.push(message),
+  });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /\/srv\/trees/);
+});

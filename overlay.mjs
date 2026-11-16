@@ -82,6 +82,8 @@ export function buildConfig(
       }
     },
     home = "/home/dev",
+    worktreeDirectory = "/work/.worktrees",
+    warn = () => {},
   },
 ) {
   const texts = Array.isArray(sources) ? sources : [sources];
@@ -123,6 +125,18 @@ export function buildConfig(
     }
   }
 
+  // Worktrees default to the server's data directory, which is a volume the
+  // host cannot see. Pin them inside the mounted project tree instead.
+  if (typeof config.worktree !== "object" || config.worktree === null) {
+    config.worktree = { directory: worktreeDirectory };
+  } else if (!config.worktree.directory) {
+    config.worktree = { ...config.worktree, directory: worktreeDirectory };
+  } else if (!config.worktree.directory.startsWith("/work/")) {
+    warn(
+      `worktree.directory is ${config.worktree.directory}, outside the mounted tree; the host cannot see those worktrees`,
+    );
+  }
+
   return { config, dropped };
 }
 
@@ -162,6 +176,7 @@ function main(args) {
     const { config, dropped } = buildConfig(sources.length ? sources : ["{}"], {
       context7Command: process.env.CONTEXT7_COMMAND || "/usr/local/bin/context7-mcp",
       context7ApiKey: process.env.CONTEXT7_API_KEY || undefined,
+      warn: (message) => console.error(`overlay: ${message}`),
     });
     if (dropped.length > 0) {
       console.error(`overlay: dropped providers with no key in this container: ${dropped.join(", ")}`);
