@@ -108,6 +108,7 @@ from it at every start.
 | nginx `502` after a restart | nginx resolved the upstream IP at start | recreate nginx (`oc restart` does) |
 | App: `Failed to send prompt — Authentication required` | the app fell back to a host service on 4097 | re-pair with `./bin/oc pair`; see Troubleshooting |
 | A server row returns and new sessions land on `127.0.0.1:49374` after `service stop` | the desktop app ships and supervises its own `opencode-cli serve --service`, respawning it within a second | shadow the bundled binary so it ignores `--service`; see Troubleshooting |
+| A worktree the container created is not a git repository on the host | the worktree's `.git` file and `.git/worktrees/<name>/gitdir` hold absolute paths under the container's name for the tree | keep one name for the tree (`PROJECTS_DIR=/work`); `oc doctor` check 9 reports a mismatch |
 | Unit tests fail with `EACCES` on `bin/oc` inside the container | `/tmp` is a `noexec` tmpfs, and the tests copy scripts into `tmpdir()` to run them | point `TMPDIR` at an exec-capable path, e.g. `TMPDIR=/work/.tmp` |
 
 ## Definition of done

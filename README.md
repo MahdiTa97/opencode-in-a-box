@@ -320,6 +320,34 @@ The path is version-scoped. A desktop-app update installs a fresh
 service returns — re-run the block in the new directory. To undo it,
 `mv -f opencode-cli.real opencode-cli`.
 
+**`git` says a worktree is not a repository (on the host).** The directory is
+there, but `git status` inside it answers `fatal: not a git repository`. A
+worktree is linked by two small files — `.git` in the worktree and
+`.git/worktrees/<name>/gitdir` in the repository — and each holds an absolute
+path written by whichever side created the worktree. If the container sees the
+tree at `/work` and the host sees it at `~/projects`, the host cannot resolve
+paths the container wrote, and the reverse is true too.
+
+Keep one name for the tree: let the host use `/work` as well.
+
+```bash
+ls -d /work 2>/dev/null || echo "free"
+sudo mv ~/projects /work
+ln -s /work ~/projects
+sudo chmod 750 /work
+sed -i 's|^PROJECTS_DIR=.*|PROJECTS_DIR=/work|' ~/opencode-docker/.env
+```
+
+A symlink is resolved by the kernel, so `cd ~/projects/x` still lands in
+`/work/x` and every absolute path a tool writes is spelled `/work/...`; that is
+what makes the worktrees work from both sides. Then `./bin/oc up` recreates the
+container with the new source, and `oc doctor` confirms it with
+`PASS 9 host path equals the container path`.
+
+Run `git worktree repair` only from the spelling you intend to keep using: it
+rewrites both link files to the path it was given, so repairing from
+`~/projects` after the move puts the old spelling back.
+
 ## `oc` — one command instead of seven
 
 `bin/oc` is a POSIX-sh shortcut for every routine job here. It writes nothing,
