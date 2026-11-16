@@ -571,11 +571,32 @@ test("doctor warns check 9 when the host path differs from the container path", 
   assert.match(r.stdout, /sudo mv/, r.stdout);
 });
 
+test("doctor check 9 names the real path in the fix, not ~/projects", () => {
+  const repo = makeRepo();
+  writeFileSync(path.join(repo, ".env"), "OPENCODE_PASSWORD=secret123\nHOST_HOME=/home/x\nPROJECTS_DIR=/home/x/code\n");
+  const r = oc(["doctor"], { repo, env: { OC_MOUNT_TARGET: "/work", OC_FLOOR: "/nonexistent/floor.json" } });
+  assert.match(r.stdout, /WARN 9 /, r.stdout);
+  assert.match(r.stdout, /ln -s \/work "\/home\/x\/code"/, r.stdout);
+  assert.doesNotMatch(r.stdout, /~\/projects/, r.stdout);
+});
+
+test("doctor refuses check 9 when the container path is a symlink", () => {
+  const repo = makeRepo();
+  mkdirSync(path.join(repo, "mnt"));
+  symlinkSync("mnt", path.join(repo, "link"), "dir");
+  const link = path.join(repo, "link");
+  writeFileSync(path.join(repo, ".env"), `OPENCODE_PASSWORD=secret123\nHOST_HOME=${link}\nPROJECTS_DIR=${link}\n`);
+  const r = oc(["doctor"], { repo, env: { OC_MOUNT_TARGET: link, OC_FLOOR: "/nonexistent/floor.json" } });
+  assert.match(r.stdout, /WARN 9 /, r.stdout);
+  assert.match(r.stdout, /symlink/, r.stdout);
+});
+
 test("doctor warns check 9 for a directory below the mount target", () => {
   const repo = makeRepo();
   writeFileSync(path.join(repo, ".env"), "OPENCODE_PASSWORD=secret123\nHOST_HOME=/work\nPROJECTS_DIR=/work/projects\n");
   const r = oc(["doctor"], { repo, env: { OC_MOUNT_TARGET: "/work", OC_FLOOR: "/nonexistent/floor.json" } });
   assert.match(r.stdout, /WARN 9 /, r.stdout);
+  assert.match(r.stdout, /set PROJECTS_DIR=\/work in \.env/, r.stdout);
 });
 
 test("doctor warns check 9 when PROJECTS_DIR is missing entirely", () => {

@@ -75,7 +75,7 @@ existence, and it is the one the container already uses. Consequences:
 ## The migration (user-run, once)
 
 ```bash
-sudo mv /home/taala/projects /work
+sudo mv ~/projects /work
 ln -s /work ~/projects
 sudo chmod 750 /work
 sed -i 's|^PROJECTS_DIR=.*|PROJECTS_DIR=/work|' ~/opencode-docker/.env

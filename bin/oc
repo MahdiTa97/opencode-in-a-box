@@ -866,13 +866,21 @@ cmd_doctor() {
   projects=${projects%/}
   if [ -z "$projects" ]; then
     warn 9 "PROJECTS_DIR is not set; cannot compare the host and the container path" \
-      "set it in .env" "oc config"
+      "set it in .env (./setup.sh writes it)" "oc config"
+  elif [ -L "$target" ]; then
+    warn 9 "$target is a symlink; the tree must live there itself" \
+      "a worktree made on the host keeps the resolved path, which the container cannot open" \
+      "sudo rm $target && sudo mv \"$projects\" $target"
   elif [ "$projects" = "$target" ]; then
     pass 9 "host path equals the container path ($target); worktrees open on both sides"
+  elif [ "${projects#"$target"/}" != "$projects" ]; then
+    warn 9 "PROJECTS_DIR is $projects, a subdirectory of the mount target $target" \
+      "the container sees the whole tree, not one project inside it" \
+      "set PROJECTS_DIR=$target in .env, then oc doctor"
   else
     warn 9 "PROJECTS_DIR is $projects but the container sees that tree at $target" \
       "worktrees created there are not git repositories on the host" \
-      "sudo mv \"$projects\" $target && ln -s $target ~/projects"
+      "[ -e $target ] || (sudo mv \"$projects\" $target && ln -s $target \"$projects\")"
   fi
 
   if [ "$JSON" = 1 ]; then

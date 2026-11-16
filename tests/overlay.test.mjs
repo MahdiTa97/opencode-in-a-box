@@ -141,10 +141,11 @@ test("fills in the directory when the host config sets worktree without one", ()
 
 test("warns when the worktree directory sits outside the mounted tree", () => {
   const warnings = [];
-  buildConfig([JSONC, '{ "worktree": { "directory": "/srv/trees" } }'], {
+  const { config } = buildConfig([JSONC, '{ "worktree": { "directory": "/srv/trees" } }'], {
     context7Command: CTX7,
     warn: (message) => warnings.push(message),
   });
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /\/srv\/trees/);
+  assert.deepEqual(config.worktree, { directory: "/srv/trees" });
 });

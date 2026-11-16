@@ -331,15 +331,18 @@ paths the container wrote, and the reverse is true too.
 Keep one name for the tree: let the host use `/work` as well.
 
 ```bash
+OLD=~/projects                    # your current PROJECTS_DIR
 ls -d /work 2>/dev/null || echo "free"
-sudo mv ~/projects /work
-ln -s /work ~/projects
+sudo mv "$OLD" /work
+ln -s /work "$OLD"
 sudo chmod 750 /work
 sed -i 's|^PROJECTS_DIR=.*|PROJECTS_DIR=/work|' ~/opencode-docker/.env
 ```
 
-A symlink is resolved by the kernel, so `cd ~/projects/x` still lands in
-`/work/x` and every absolute path a tool writes is spelled `/work/...`; that is
+`$OLD` is whatever `PROJECTS_DIR` already points at; `~/projects` is only the
+default. A symlink is resolved by the kernel, so `cd "$OLD"/x` still lands in
+`/work/x` and every path a tool resolves through the kernel is spelled
+`/work/...`; that is
 what makes the worktrees work from both sides. Then `./bin/oc up` recreates the
 container with the new source, and `oc doctor` confirms it with
 `PASS 9 host path equals the container path`.
@@ -371,7 +374,7 @@ oc help
 | `oc restore --check FILE` / `oc restore FILE --yes` | `scripts/restore.sh` |
 | `oc audit [window]` | `scripts/audit.sh` |
 | `oc config` | validates `.env` and the compose file |
-| `oc doctor [--json]` | the eight checks below |
+| `oc doctor [--json]` | the nine checks below |
 
 Docker normally needs elevated rights here; any command that needs the daemon
 re-runs itself through `sudo`. Set `OC_NO_SUDO=1` to disable that and fail with
@@ -388,7 +391,12 @@ the reason instead. `OC_VERBOSE=1` prints every command first.
 | 5 | `seccomp/opencode.json` matches `scripts/gen-seccomp.mjs` |
 | 6 | the image's `org.opencode-docker.policy-sha` label matches `policy/opencode.json` |
 | 7 | `opencode` is healthy and both loopback addresses answer `401` |
-| 8 | `/etc/opencode/opencode.json` has the same policy count as this tree |
+| 8 | `/etc/opencode/opencode.json` has the same policy content as this tree |
+| 9 | `PROJECTS_DIR` is the path the container mounts (`/work`), and that path is a real directory, not a symlink |
+
+`PASS` on check 9 means the two sides spell the tree the same way, which is what
+lets a worktree created in the container be opened on the host. A `WARN` there
+is not an error: the install works, it just cannot share worktrees.
 
 `PASS` is good, `WARN` is survivable, `FAIL` exits 1. A `WARN` or `FAIL`
 carries a `fix:` line with the command that resolves it.
