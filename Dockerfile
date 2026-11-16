@@ -1,6 +1,6 @@
 # Base image pinned by digest: a tag can be re-pointed at different content,
 # a digest cannot. Override when building from a registry mirror:
-#   --build-arg NODE_IMAGE=docker.arvancloud.ir/library/node:24-bookworm-slim
+#   --build-arg NODE_IMAGE=docker-mirror.example/library/node:24-bookworm-slim
 ARG NODE_IMAGE=node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 FROM ${NODE_IMAGE}
 

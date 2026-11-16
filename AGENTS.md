@@ -30,7 +30,7 @@ from it at every start.
    the image. A plain `docker compose build` leaves the label `unknown`, and
    `oc doctor` check 6 will (correctly) complain.
 3. **Never `--pull`.** Docker Hub returns 403 from this network. Pull
-   `docker.arvancloud.ir/library/<image>` and retag, or pass
+   `docker-mirror.example/library/<image>` and retag, or pass
    `--build-arg NODE_IMAGE=…` / `NGINX_IMAGE=…` (see Troubleshooting).
 4. **Know what is baked into the image.** Changing `Dockerfile`, `overlay.mjs`,
    `entrypoint.sh`, `commands/`, `policy/opencode.json` or

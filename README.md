@@ -241,15 +241,16 @@ digest, so retagging a mirrored image under its old tag no longer satisfies the
 build — pull through the mirror and point the build at it instead:
 
 ```bash
-sudo docker pull docker.arvancloud.ir/library/node:24-bookworm-slim
-sudo docker pull docker.arvancloud.ir/library/nginx:1.27-alpine
-sudo docker compose build --build-arg NODE_IMAGE=docker.arvancloud.ir/library/node:24-bookworm-slim
-echo 'NGINX_IMAGE=docker.arvancloud.ir/library/nginx:1.27-alpine' >> .env
+sudo docker pull docker-mirror.example/library/node:24-bookworm-slim
+sudo docker pull docker-mirror.example/library/nginx:1.27-alpine
+sudo docker compose build --build-arg NODE_IMAGE=docker-mirror.example/library/node:24-bookworm-slim
+echo 'NGINX_IMAGE=docker-mirror.example/library/nginx:1.27-alpine' >> .env
 ```
 
-Do not pass `--pull`: that is the request Docker Hub refuses. The trade-off is
-explicit — a mirror tag is not content-addressed, so the build is pinned only
-on machines that can reach Docker Hub.
+`docker-mirror.example` stands for any registry mirror your network can reach;
+substitute its host. Do not pass `--pull`: that is the request Docker Hub
+refuses. The trade-off is explicit — a mirror tag is not content-addressed, so
+the build is pinned only on machines that can reach Docker Hub.
 
 **The desktop app says `Failed to send prompt — Authentication required`.** The
 app has fallen back to a local service of its own instead of the container.
@@ -652,3 +653,7 @@ container's command directory on every start. In a session type:
 
 It runs the project's own type check, lint, and tests, and reports the real
 output; it is not allowed to call work complete while a check is red.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
