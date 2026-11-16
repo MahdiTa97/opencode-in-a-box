@@ -506,11 +506,11 @@ test("doctor --json reports a healthy installation with exit 0", () => {
   });
   assert.equal(r.code, 0, r.stdout);
   const parsed = JSON.parse(r.stdout);
-  assert.equal(parsed.checks.length, 8);
+  assert.equal(parsed.checks.length, 9);
   assert.equal(parsed.failed, 0);
-  assert.ok(parsed.passed + parsed.warned === 8);
+  assert.ok(parsed.passed + parsed.warned === 9);
   for (const c of parsed.checks) {
-    assert.ok(["1", "2", "3", "4", "5", "6", "7", "8"].includes(String(c.id)), c.id);
+    assert.ok(["1", "2", "3", "4", "5", "6", "7", "8", "9"].includes(String(c.id)), c.id);
     assert.ok(["pass", "warn", "fail"].includes(c.status), c.status);
     if (c.status !== "pass") assert.ok(c.fix.length > 0, `check ${c.id} has no fix`);
   }
@@ -554,4 +554,33 @@ test("doctor carries a fix line on a failing check", () => {
   const r = oc(["doctor"], { repo, env: { OC_NO_SUDO: "1" } });
   assert.equal(r.code, 1);
   assert.match(r.stdout, /fix: .*setup\.sh/);
+});
+
+test("doctor passes check 9 when the host path is the container path", () => {
+  const repo = makeRepo();
+  writeFileSync(path.join(repo, ".env"), "OPENCODE_PASSWORD=secret123\nHOST_HOME=/work\nPROJECTS_DIR=/work/\n");
+  const r = oc(["doctor"], { repo, env: { OC_MOUNT_TARGET: "/work", OC_FLOOR: "/nonexistent/floor.json" } });
+  assert.match(r.stdout, /PASS 9 /, r.stdout);
+});
+
+test("doctor warns check 9 when the host path differs from the container path", () => {
+  const repo = makeRepo();
+  writeFileSync(path.join(repo, ".env"), "OPENCODE_PASSWORD=secret123\nHOST_HOME=/home/x\nPROJECTS_DIR=/home/x/projects\n");
+  const r = oc(["doctor"], { repo, env: { OC_MOUNT_TARGET: "/work", OC_FLOOR: "/nonexistent/floor.json" } });
+  assert.match(r.stdout, /WARN 9 /, r.stdout);
+  assert.match(r.stdout, /sudo mv/, r.stdout);
+});
+
+test("doctor warns check 9 for a directory below the mount target", () => {
+  const repo = makeRepo();
+  writeFileSync(path.join(repo, ".env"), "OPENCODE_PASSWORD=secret123\nHOST_HOME=/work\nPROJECTS_DIR=/work/projects\n");
+  const r = oc(["doctor"], { repo, env: { OC_MOUNT_TARGET: "/work", OC_FLOOR: "/nonexistent/floor.json" } });
+  assert.match(r.stdout, /WARN 9 /, r.stdout);
+});
+
+test("doctor warns check 9 when PROJECTS_DIR is missing entirely", () => {
+  const repo = makeRepo();
+  writeFileSync(path.join(repo, ".env"), "OPENCODE_PASSWORD=secret123\nHOST_HOME=/work\n");
+  const r = oc(["doctor"], { repo, env: { OC_MOUNT_TARGET: "/work", OC_FLOOR: "/nonexistent/floor.json" } });
+  assert.match(r.stdout, /WARN 9 /, r.stdout);
 });

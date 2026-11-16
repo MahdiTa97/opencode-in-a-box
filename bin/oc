@@ -380,13 +380,14 @@ doctor — check the installation's real state
 
 usage: oc doctor [--json]
 
-  --json   one JSON document: counts plus eight checks
+  --json   one JSON document: counts plus nine checks
 
-Eight read-only checks, exit 1 if any FAILs:
+Nine read-only checks, exit 1 if any FAILs:
   1 .env present, private, real password     5 seccomp profile matches generator
   2 paths set and project root exists        6 image carries the policy digest
   3 compose configuration parses             7 service healthy, front door 401
   4 image newer than the build inputs        8 host floor matches this tree
+  9 host path equals the container path
 
 examples:
   oc doctor
@@ -855,6 +856,23 @@ cmd_doctor() {
       fail 8 "host floor differs from policy/opencode.json ($(jq '.policies|length' "$floor" 2>/dev/null || echo ?) vs $(jq '.policies|length' policy/opencode.json 2>/dev/null || echo ?) policies)" \
         "reinstall it" "sudo install -m 644 -o root -g root policy/opencode.json $floor"
     fi
+  fi
+
+  # 9. the host and the container use the same name for the tree
+  # git stores absolute paths in a worktree's .git file, so a worktree made
+  # under one name cannot be opened under the other.
+  target=${OC_MOUNT_TARGET:-/work}
+  projects=$(sh scripts/check-env.sh get PROJECTS_DIR 2>/dev/null || true)
+  projects=${projects%/}
+  if [ -z "$projects" ]; then
+    warn 9 "PROJECTS_DIR is not set; cannot compare the host and the container path" \
+      "set it in .env" "oc config"
+  elif [ "$projects" = "$target" ]; then
+    pass 9 "host path equals the container path ($target); worktrees open on both sides"
+  else
+    warn 9 "PROJECTS_DIR is $projects but the container sees that tree at $target" \
+      "worktrees created there are not git repositories on the host" \
+      "sudo mv \"$projects\" $target && ln -s $target ~/projects"
   fi
 
   if [ "$JSON" = 1 ]; then
